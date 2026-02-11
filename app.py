@@ -1,6 +1,6 @@
 
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 import fitz
 
@@ -14,12 +14,9 @@ os_api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if os_api_key:
     try:
-        # 1. Forzamos la configuración a la versión estable 'v1'
-        genai.configure(api_key=os_api_key, transport='rest')
+        # Forzamos la nueva conexión estable
+        client = genai.Client(api_key=os_api_key)
         
-        # 2. Usamos el modelo con la ruta completa y específica
-        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-
         # --- CARGADOR DE ARCHIVOS ---
         archivo = st.file_uploader("Sube tu estudio (JPG, PNG o PDF)", type=["jpg", "png", "jpeg", "pdf"])
 
@@ -37,15 +34,15 @@ if os_api_key:
             if st.button("Analizar con IA"):
                 with st.spinner("La IA está leyendo tu informe..."):
                     try:
-                        # 3. Prompt directo
                         prompt = "Actúa como un asistente médico experto. Analiza este informe cardiológico y explica los puntos clave."
-                        # Generamos contenido forzando la comunicación estable
-                        response = model.generate_content([prompt, img])
-                        
+                        # Generación con la nueva librería para evitar el error 404
+                        response = client.models.generate_content(
+                            model='gemini-1.5-flash',
+                            contents=[prompt, img]
+                        )
                         st.success("Análisis completado:")
                         st.markdown(response.text)
                     except Exception as e:
-                        # Si falla, te mostrará el mensaje exacto para saber qué pasa
                         st.error(f"Error en el análisis: {e}")
     except Exception as e:
         st.error(f"Error de conexión: {e}")
