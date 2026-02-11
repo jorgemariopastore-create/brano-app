@@ -13,9 +13,10 @@ st.subheader("Análisis inteligente de informes cardiológicos")
 os_api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if os_api_key:
-    # Líneas 18 y 19 corregidas con transport='rest' para evitar el error 404
-    genai.configure(api_key=os_api_key, transport='rest')
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Configuración de seguridad para evitar el error 404
+    genai.configure(api_key=os_api_key)
+    # Forzamos la ruta completa del modelo
+    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
 
     # --- CARGADOR DE ARCHIVOS ---
     archivo = st.file_uploader("Sube tu estudio (JPG, PNG o PDF)", type=["jpg", "png", "jpeg", "pdf"])
