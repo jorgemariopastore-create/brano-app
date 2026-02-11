@@ -14,11 +14,11 @@ os_api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if os_api_key:
     try:
-        # Forzamos la configuración a la versión estable v1
-        genai.configure(api_key=os_api_key)
+        # 1. Forzamos la configuración a la versión estable 'v1'
+        genai.configure(api_key=os_api_key, transport='rest')
         
-        # Cargamos el modelo sin el prefijo 'models/' para probar la ruta directa
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 2. Usamos el modelo con la ruta completa y específica
+        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
 
         # --- CARGADOR DE ARCHIVOS ---
         archivo = st.file_uploader("Sube tu estudio (JPG, PNG o PDF)", type=["jpg", "png", "jpeg", "pdf"])
@@ -37,15 +37,17 @@ if os_api_key:
             if st.button("Analizar con IA"):
                 with st.spinner("La IA está leyendo tu informe..."):
                     try:
-                        prompt = "Actúa como un asistente médico experto. Analiza esta imagen de un estudio cardiológico y explica los puntos clave en lenguaje sencillo."
-                        # Enviamos la imagen directamente
+                        # 3. Prompt directo
+                        prompt = "Actúa como un asistente médico experto. Analiza este informe cardiológico y explica los puntos clave."
+                        # Generamos contenido forzando la comunicación estable
                         response = model.generate_content([prompt, img])
                         
                         st.success("Análisis completado:")
                         st.markdown(response.text)
                     except Exception as e:
+                        # Si falla, te mostrará el mensaje exacto para saber qué pasa
                         st.error(f"Error en el análisis: {e}")
     except Exception as e:
-        st.error(f"Error de configuración: {e}")
+        st.error(f"Error de conexión: {e}")
 else:
     st.warning("Por favor, introduce tu API Key para comenzar.")
