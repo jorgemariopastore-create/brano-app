@@ -16,7 +16,7 @@ os_api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if os_api_key:
     genai.configure(api_key=os_api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
     # --- CARGADOR DE ARCHIVOS ---
     archivo = st.file_uploader("Sube tu estudio (JPG, PNG o PDF)", type=["jpg", "png", "jpeg", "pdf"])
@@ -46,6 +46,7 @@ if os_api_key:
                     st.error(f"Hubo un error: {e}")
 else:
     st.warning("Por favor, introduce tu API Key para comenzar.")          
+
 
 
 
