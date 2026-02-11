@@ -1,5 +1,5 @@
 
-  import streamlit as st
+import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import fitz  # PyMuPDF
@@ -46,3 +46,4 @@ if os_api_key:
                     st.error(f"Hubo un error: {e}")
 else:
     st.warning("Por favor, introduce tu API Key para comenzar.")          )
+
