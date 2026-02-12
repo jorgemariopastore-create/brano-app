@@ -7,9 +7,9 @@ import io
 import fitz
 
 # 1. Configuración de la página
-st.set_page_config(page_title="CardioReport AI (Groq)", page_icon="❤️")
+st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
 st.title("❤️ CardioReport AI")
-st.subheader("Versión Estable Final - Argentina")
+st.subheader("Análisis de Informes Cardiológicos")
 
 # 2. Entrada de la llave de Groq
 api_key = st.text_input("Introduce tu Groq API Key (gsk_...):", type="password")
@@ -22,6 +22,7 @@ if api_key:
         archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
 
         if archivo is not None:
+            # Procesamiento de imagen o PDF
             if archivo.type == "application/pdf":
                 doc = fitz.open(stream=archivo.read(), filetype="pdf")
                 pagina = doc.load_page(0)
@@ -35,15 +36,15 @@ if api_key:
             st.image(img, caption="Estudio cargado", width=500)
 
             # 4. Botón de análisis
-            if st.button("Analizar con IA"):
-                with st.spinner("Analizando con Llama 3.2 Instant..."):
+            if st.button("Analizar ahora"):
+                with st.spinner("La IA está leyendo el informe..."):
                     try:
                         # Convertir a base64
-                        base64_image = base64.b64encode(img_data).decode('utf-8')
+                        base64_image = base64.b64encode(img_data if archivo.type != "application/pdf" else img_data).decode('utf-8')
                         
-                        # MODELO ACTUALIZADO: llama-3.2-11b-vision-instant
+                        # USAMOS EL MODELO DE VISIÓN POR DEFECTO ACTUAL
                         completion = client.chat.completions.create(
-                            model="llama-3.2-11b-vision-instant",
+                            model="llama-3.2-11b-vision-preview", 
                             messages=[
                                 {
                                     "role": "user",
@@ -53,13 +54,12 @@ if api_key:
                                     ]
                                 }
                             ],
-                            temperature=0.5,
                         )
                         st.success("Análisis completado:")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
-                        st.error(f"Error en el análisis: {e}")
+                        st.error(f"Error técnico: {e}")
     except Exception as e:
-        st.error(f"Error de configuración: {e}")
+        st.error(f"Error de conexión: {e}")
 else:
-    st.info("Introduce tu llave de Groq para comenzar.")
+    st.info("Pega tu llave de Groq para empezar.")
