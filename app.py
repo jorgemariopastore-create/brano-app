@@ -13,10 +13,10 @@ api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if api_key:
     try:
-        # CONFIGURACIÓN CLAVE: Forzamos v1beta para saltar el bloqueo del error 404
+        # CONEXIÓN ESTABLE: Usamos v1 que es la versión oficial para cuentas nuevas
         client = genai.Client(
             api_key=api_key, 
-            http_options={'api_version': 'v1beta'}
+            http_options={'api_version': 'v1'}
         )
         
         # 3. Subida de archivos
@@ -31,15 +31,16 @@ if api_key:
             else:
                 img = Image.open(archivo)
 
+            # Imagen con ancho automático
             st.image(img, caption="Estudio cargado", width='stretch')
 
             # 4. Botón de análisis
             if st.button("Analizar con IA"):
                 with st.spinner("Analizando informe..."):
                     try:
-                        prompt = "Actúa como un cardiólogo experto. Analiza este informe y explica los resultados en lenguaje muy sencillo para el paciente."
+                        prompt = "Actúa como un cardiólogo experto. Analiza este informe médico y explica los resultados en lenguaje muy sencillo para el paciente, destacando si hay algo urgente."
                         
-                        # Usamos el modelo Flash que es el más compatible
+                        # Llamada al modelo estable
                         response = client.models.generate_content(
                             model="gemini-1.5-flash",
                             contents=[prompt, img]
@@ -52,4 +53,4 @@ if api_key:
     except Exception as e:
         st.error(f"Error de configuración: {e}")
 else:
-    st.info("Por favor, introduce tu API Key para comenzar.")
+    st.info("Por favor, introduce la API Key de tu nuevo Gmail.")
