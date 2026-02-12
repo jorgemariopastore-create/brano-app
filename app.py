@@ -10,9 +10,9 @@ key = st.text_input("API Key:", type="password")
 
 if key:
    genai.configure(api_key=key, transport='rest') 
-    # ESTA LINEA ES LA QUE DA EL ERROR SI DICE BETA. 
-    # ASEGÚRATE QUE QUEDE ASÍ:
-    model = genai.GenerativeModel('gemini-1.5-flash')
+   # ESTA LINEA ES LA QUE DA EL ERROR SI DICE BETA. 
+   # ASEGÚRATE QUE QUEDE ASÍ:
+   model = genai.GenerativeModel('gemini-1.5-flash')
 
     file = st.file_uploader("Subir PDF o Imagen", type=["jpg", "png", "pdf"])
 
@@ -32,4 +32,5 @@ if key:
                     st.write(res.text)
                 except Exception as e:
                     st.error(f"Error: {e}")
+
 
