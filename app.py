@@ -41,7 +41,7 @@ if api_key:
                         
                         # Llamada al modelo usando la nueva librería
                         response = client.models.generate_content(
-                            model="gemini-1.5-pro",
+                            model="gemini-1.5-flash-8b",
                             contents=[prompt, img]
                         )
                         
@@ -53,4 +53,5 @@ if api_key:
         st.error(f"Error de configuración: {e}")
 else:
     st.info("Por favor, introduce tu API Key para comenzar.")
+
 
