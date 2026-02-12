@@ -5,7 +5,7 @@ from PIL import Image
 import fitz
 
 st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
-st.title("❤️ CardioReport AI")
+st.title("❤️ CardioReport V2")
 
 api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
@@ -43,3 +43,4 @@ if api_key:
         st.error(f"Error de configuración: {e}")
 else:
     st.info("Por favor, introduce tu API Key.")
+
