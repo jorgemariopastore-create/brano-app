@@ -27,7 +27,7 @@ if api_key:
                 img = Image.open(archivo)
 
             # Cambiamos 'use_container_width' por 'width' como pidió tu consola
-            st.image(img, caption="Estudio cargado", width=None)
+            st.image(img, caption="Estudio cargado", width='stretch')
 
             if st.button("Analizar con IA"):
                 with st.spinner("Analizando informe..."):
@@ -46,3 +46,4 @@ if api_key:
         st.error(f"Error de configuración: {e}")
 else:
     st.info("Por favor, introduce tu API Key.")
+
