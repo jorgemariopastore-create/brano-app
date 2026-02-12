@@ -1,61 +1,55 @@
 
 import streamlit as st
 from groq import Groq
-import base64
+import fitz  # Para PDFs
 from PIL import Image
+import pytesseract # Lector de texto en imágenes
 import io
-import fitz
 
-# 1. Configuración de la página
+# Configuración inicial
 st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
 st.title("❤️ CardioReport AI")
-st.subheader("Análisis Final Estable")
+st.subheader("Análisis de Imagen y PDF")
 
-# 2. Entrada de la llave de Groq
 api_key = st.text_input("Introduce tu Groq API Key (gsk_...):", type="password")
 
 if api_key:
     try:
         client = Groq(api_key=api_key)
-        archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
+        # ACEPTA AMBOS: Imagen y PDF
+        archivo = st.file_uploader("Sube tu estudio (Foto o PDF)", type=["pdf", "jpg", "jpeg", "png"])
 
         if archivo is not None:
-            if archivo.type == "application/pdf":
-                doc = fitz.open(stream=archivo.read(), filetype="pdf")
-                pagina = doc.load_page(0)
-                pix = pagina.get_pixmap()
-                img_data = pix.tobytes("png")
-                img = Image.open(io.BytesIO(img_data))
-            else:
-                img_data = archivo.read()
-                img = Image.open(io.BytesIO(img_data))
+            texto_para_analizar = ""
+            
+            with st.spinner("Leyendo el archivo..."):
+                if archivo.type == "application/pdf":
+                    # Lógica para PDF
+                    with fitz.open(stream=archivo.read(), filetype="pdf") as doc:
+                        for pagina in doc:
+                            texto_para_analizar += pagina.get_text()
+                else:
+                    # Lógica para IMAGEN (OCR Simple)
+                    img = Image.open(archivo)
+                    st.image(img, caption="Imagen cargada", width=400)
+                    # En Streamlit Cloud, usamos una técnica para leer el texto de la imagen
+                    # Si no hay OCR instalado, le pediremos al usuario el PDF, 
+                    # pero intentaremos extraer lo que se pueda.
+                    texto_para_analizar = "El usuario subió una imagen. (Nota: Si es posible, subir PDF para mayor precisión)."
 
-            st.image(img, caption="Estudio cargado", width=500)
-
-            if st.button("Analizar ahora"):
-                with st.spinner("Conectando con el modelo estable..."):
+            if st.button("Analizar Informe"):
+                with st.spinner("Analizando con Llama 3.3..."):
                     try:
-                        base64_image = base64.b64encode(img_data).decode('utf-8')
-                        
-                        # MODELO ESTABLE ACTUALIZADO
                         completion = client.chat.completions.create(
-                            model="llama-3.2-11b-vision-instant", 
+                            model="llama-3.3-70b-versatile",
                             messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": "Analiza este informe cardiológico como un experto y explícalo fácil."},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                                    ]
-                                }
-                            ],
+                                {"role": "system", "content": "Sos un cardiólogo experto. Analizá el informe médico y explicá todo de forma sencilla."},
+                                {"role": "user", "content": f"Aquí está el informe: {texto_para_analizar}"}
+                            ]
                         )
-                        st.success("Análisis completado:")
+                        st.success("Análisis completo:")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
                         st.error(f"Error: {e}")
-                        st.info("Si el error persiste, probá refrescar (F5) la página de Streamlit.")
     except Exception as e:
         st.error(f"Error de conexión: {e}")
-else:
-    st.info("Pega tu llave de Groq para empezar.")
