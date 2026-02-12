@@ -1,25 +1,20 @@
 
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 import fitz
 
-# 1. Configuración de la página
+# Configuración de la página
 st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
 st.title("❤️ CardioReport AI")
 
-# 2. Entrada de la llave API
 api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if api_key:
     try:
-        # 3. Configuración con la NUEVA sintaxis (para evitar v1beta)
-        genai.configure(api_key=api_key, transport='rest')
+        # Nueva forma de conectar (Versión 2026)
+        client = genai.Client(api_key=api_key)
         
-        # 4. Definición del modelo (usando la ruta oficial que pide la consola)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
-        # 5. Subida de archivos
         archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
 
         if archivo is not None:
@@ -31,15 +26,18 @@ if api_key:
             else:
                 img = Image.open(archivo)
 
-            st.image(img, caption="Estudio cargado", use_container_width=True)
+            # Cambiamos 'use_container_width' por 'width' como pidió tu consola
+            st.image(img, caption="Estudio cargado", width=None)
 
-            # 6. Botón de análisis
             if st.button("Analizar con IA"):
                 with st.spinner("Analizando informe..."):
                     try:
-                        prompt = "Actúa como un cardiólogo experto. Analiza este informe y explica los resultados en lenguaje muy sencillo para el paciente."
-                        # Usamos la sintaxis más compatible para la versión 0.8.6
-                        response = model.generate_content([prompt, img])
+                        prompt = "Actúa como un cardiólogo experto. Analiza este informe y explica los resultados en lenguaje muy sencillo."
+                        # Nueva forma de generar contenido
+                        response = client.models.generate_content(
+                            model="gemini-1.5-flash",
+                            contents=[prompt, img]
+                        )
                         st.success("Análisis completado:")
                         st.markdown(response.text)
                     except Exception as e:
@@ -47,4 +45,4 @@ if api_key:
     except Exception as e:
         st.error(f"Error de configuración: {e}")
 else:
-    st.info("Por favor, introduce tu API Key para comenzar.")
+    st.info("Por favor, introduce tu API Key.")
