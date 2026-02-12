@@ -11,11 +11,9 @@ api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if api_key:
     try:
-        # Esto soluciona el error 404 de la versión beta
         genai.configure(api_key=api_key, transport='rest')
         model = genai.GenerativeModel('gemini-1.5-flash')
-
-        archivo = st.file_uploader("Sube tu estudio", type=["jpg", "png", "jpeg", "pdf"])
+        archivo = st.file_uploader("Sube tu estudio", type=["jpg", "png", "pdf"])
 
         if archivo is not None:
             if archivo.type == "application/pdf":
@@ -23,16 +21,11 @@ if api_key:
                 img = Image.frombytes("RGB", [doc[0].get_pixmap().width, doc[0].get_pixmap().height], doc[0].get_pixmap().samples)
             else:
                 img = Image.open(archivo)
+            st.image(img, use_container_width=True)
 
-            st.image(img, caption="Estudio cargado", use_container_width=True)
-
-            if st.button("Analizar con IA"):
+            if st.button("Analizar"):
                 with st.spinner("Analizando..."):
-                    try:
-                        response = model.generate_content(["Actúa como cardiólogo y explica este informe:", img])
-                        st.success("Análisis:")
-                        st.markdown(response.text)
-                    except Exception as e:
-                        st.error(f"Error en el análisis: {e}")
+                    res = model.generate_content(["Explica este informe médico:", img])
+                    st.write(res.text)
     except Exception as e:
         st.error(f"Error: {e}")
