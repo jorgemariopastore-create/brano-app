@@ -9,7 +9,7 @@ import fitz
 # 1. Configuración de la página
 st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
 st.title("❤️ CardioReport AI")
-st.subheader("Análisis de Informes Cardiológicos")
+st.subheader("Análisis Final Estable")
 
 # 2. Entrada de la llave de Groq
 api_key = st.text_input("Introduce tu Groq API Key (gsk_...):", type="password")
@@ -17,12 +17,9 @@ api_key = st.text_input("Introduce tu Groq API Key (gsk_...):", type="password")
 if api_key:
     try:
         client = Groq(api_key=api_key)
-        
-        # 3. Subida de archivos
         archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
 
         if archivo is not None:
-            # Procesamiento de imagen o PDF
             if archivo.type == "application/pdf":
                 doc = fitz.open(stream=archivo.read(), filetype="pdf")
                 pagina = doc.load_page(0)
@@ -35,21 +32,19 @@ if api_key:
 
             st.image(img, caption="Estudio cargado", width=500)
 
-            # 4. Botón de análisis
             if st.button("Analizar ahora"):
-                with st.spinner("La IA está leyendo el informe..."):
+                with st.spinner("Conectando con el modelo estable..."):
                     try:
-                        # Convertir a base64
                         base64_image = base64.b64encode(img_data).decode('utf-8')
                         
-                        # MODELO ACTUALIZADO: Llama 3.2 11B Vision
+                        # MODELO ESTABLE ACTUALIZADO
                         completion = client.chat.completions.create(
-                            model="llama-3.2-11b-vision-preview", 
+                            model="llama-3.2-11b-vision-instant", 
                             messages=[
                                 {
                                     "role": "user",
                                     "content": [
-                                        {"type": "text", "text": "Actúa como un cardiólogo experto. Analiza este informe médico y explica los resultados en lenguaje sencillo para el paciente."},
+                                        {"type": "text", "text": "Analiza este informe cardiológico como un experto y explícalo fácil."},
                                         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
                                     ]
                                 }
@@ -58,16 +53,8 @@ if api_key:
                         st.success("Análisis completado:")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
-                        # Si el modelo arriba falla, intentamos con el de respaldo automáticamente
-                        st.warning("Reintentando con modelo de respaldo...")
-                        try:
-                            completion = client.chat.completions.create(
-                                model="llama-3.2-90b-vision-preview",
-                                messages=[{"role": "user", "content": [{"type": "text", "text": "Analiza la imagen."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}]} ]
-                            )
-                            st.markdown(completion.choices[0].message.content)
-                        except:
-                            st.error(f"Error técnico persistente: {e}. Por favor, verifica en Groq Playground qué modelo tienes activo.")
+                        st.error(f"Error: {e}")
+                        st.info("Si el error persiste, probá refrescar (F5) la página de Streamlit.")
     except Exception as e:
         st.error(f"Error de conexión: {e}")
 else:
