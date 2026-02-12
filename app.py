@@ -40,9 +40,9 @@ if api_key:
                 with st.spinner("La IA está leyendo el informe..."):
                     try:
                         # Convertir a base64
-                        base64_image = base64.b64encode(img_data if archivo.type != "application/pdf" else img_data).decode('utf-8')
+                        base64_image = base64.b64encode(img_data).decode('utf-8')
                         
-                        # USAMOS EL MODELO DE VISIÓN POR DEFECTO ACTUAL
+                        # MODELO ACTUALIZADO: Llama 3.2 11B Vision
                         completion = client.chat.completions.create(
                             model="llama-3.2-11b-vision-preview", 
                             messages=[
@@ -58,7 +58,16 @@ if api_key:
                         st.success("Análisis completado:")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
-                        st.error(f"Error técnico: {e}")
+                        # Si el modelo arriba falla, intentamos con el de respaldo automáticamente
+                        st.warning("Reintentando con modelo de respaldo...")
+                        try:
+                            completion = client.chat.completions.create(
+                                model="llama-3.2-90b-vision-preview",
+                                messages=[{"role": "user", "content": [{"type": "text", "text": "Analiza la imagen."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}]} ]
+                            )
+                            st.markdown(completion.choices[0].message.content)
+                        except:
+                            st.error(f"Error técnico persistente: {e}. Por favor, verifica en Groq Playground qué modelo tienes activo.")
     except Exception as e:
         st.error(f"Error de conexión: {e}")
 else:
