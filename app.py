@@ -13,11 +13,11 @@ api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if api_key:
     try:
-        # 3. Configuración forzada para evitar errores de conexión
+        # 3. Configuración con la NUEVA sintaxis (para evitar v1beta)
         genai.configure(api_key=api_key, transport='rest')
         
-        # 4. Definición del modelo con RUTA COMPLETA (Solución al error 404)
-        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+        # 4. Definición del modelo (usando la ruta oficial que pide la consola)
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
         # 5. Subida de archivos
         archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
@@ -38,6 +38,7 @@ if api_key:
                 with st.spinner("Analizando informe..."):
                     try:
                         prompt = "Actúa como un cardiólogo experto. Analiza este informe y explica los resultados en lenguaje muy sencillo para el paciente."
+                        # Usamos la sintaxis más compatible para la versión 0.8.6
                         response = model.generate_content([prompt, img])
                         st.success("Análisis completado:")
                         st.markdown(response.text)
