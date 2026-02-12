@@ -12,7 +12,7 @@ api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 if api_key:
     try:
         genai.configure(api_key=api_key, transport='rest')
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro-vision')
         archivo = st.file_uploader("Sube tu estudio", type=["jpg", "png", "pdf"])
 
         if archivo is not None:
@@ -29,3 +29,4 @@ if api_key:
                     st.write(res.text)
     except Exception as e:
         st.error(f"Error: {e}")
+
