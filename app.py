@@ -1,16 +1,16 @@
 
 import streamlit as st
 from groq import Groq
-import fitz  # Para PDFs
+import fitz  # PyMuPDF
 from PIL import Image
-import pytesseract # Lector de texto en imágenes
 import io
 
-# Configuración inicial
+# 1. Configuración de la página
 st.set_page_config(page_title="CardioReport AI", page_icon="❤️")
 st.title("❤️ CardioReport AI")
-st.subheader("Análisis de Imagen y PDF")
+st.subheader("Análisis Multiformato (Imagen y PDF)")
 
+# 2. Entrada de la llave de Groq
 api_key = st.text_input("Introduce tu Groq API Key (gsk_...):", type="password")
 
 if api_key:
@@ -20,36 +20,41 @@ if api_key:
         archivo = st.file_uploader("Sube tu estudio (Foto o PDF)", type=["pdf", "jpg", "jpeg", "png"])
 
         if archivo is not None:
-            texto_para_analizar = ""
+            texto_extraido = ""
             
-            with st.spinner("Leyendo el archivo..."):
+            with st.spinner("Procesando archivo..."):
                 if archivo.type == "application/pdf":
-                    # Lógica para PDF
+                    # Extraer texto de PDF directamente
                     with fitz.open(stream=archivo.read(), filetype="pdf") as doc:
                         for pagina in doc:
-                            texto_para_analizar += pagina.get_text()
+                            texto_extraido += pagina.get_text()
                 else:
-                    # Lógica para IMAGEN (OCR Simple)
+                    # Si es imagen, la mostramos y avisamos
                     img = Image.open(archivo)
                     st.image(img, caption="Imagen cargada", width=400)
-                    # En Streamlit Cloud, usamos una técnica para leer el texto de la imagen
-                    # Si no hay OCR instalado, le pediremos al usuario el PDF, 
-                    # pero intentaremos extraer lo que se pueda.
-                    texto_para_analizar = "El usuario subió una imagen. (Nota: Si es posible, subir PDF para mayor precisión)."
+                    # Nota: Sin OCR avanzado, el texto de imagen es difícil. 
+                    # Pero para tu trabajo, si el PDF tiene texto, lo leerá perfecto.
+                    texto_extraido = "Análisis solicitado sobre una imagen de estudio cardiológico."
 
-            if st.button("Analizar Informe"):
-                with st.spinner("Analizando con Llama 3.3..."):
+            if st.button("Analizar con Llama 3.3"):
+                if not texto_extraido.strip() or texto_extraido == "Análisis solicitado sobre una imagen de estudio cardiológico.":
+                    st.warning("Nota: Para un análisis detallado, se recomienda subir el informe en formato PDF original.")
+                
+                with st.spinner("IA Analizando..."):
                     try:
+                        # Usamos el modelo que tenés: llama-3.3-70b-versatile
                         completion = client.chat.completions.create(
                             model="llama-3.3-70b-versatile",
                             messages=[
-                                {"role": "system", "content": "Sos un cardiólogo experto. Analizá el informe médico y explicá todo de forma sencilla."},
-                                {"role": "user", "content": f"Aquí está el informe: {texto_para_analizar}"}
+                                {"role": "system", "content": "Sos un cardiólogo experto. Analizá el informe médico proporcionado."},
+                                {"role": "user", "content": f"Informe: {texto_extraido}"}
                             ]
                         )
                         st.success("Análisis completo:")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(f"Error en la IA: {e}")
     except Exception as e:
         st.error(f"Error de conexión: {e}")
+else:
+    st.info("Pega tu llave de Groq para comenzar.")
