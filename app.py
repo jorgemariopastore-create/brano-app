@@ -13,15 +13,16 @@ api_key = st.text_input("Introduce tu Gemini API Key:", type="password")
 
 if api_key:
     try:
-        # 3. Configuración de conexión estable (Evita error 404)
+        # 3. Configuración forzada para evitar errores de conexión
         genai.configure(api_key=api_key, transport='rest')
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # 4. Definición del modelo con RUTA COMPLETA (Solución al error 404)
+        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
 
-        # 4. Subida de archivos
+        # 5. Subida de archivos
         archivo = st.file_uploader("Sube tu estudio (Imagen o PDF)", type=["jpg", "png", "jpeg", "pdf"])
 
         if archivo is not None:
-            # Procesar PDF o Imagen
             if archivo.type == "application/pdf":
                 doc = fitz.open(stream=archivo.read(), filetype="pdf")
                 pagina = doc.load_page(0)
@@ -32,7 +33,7 @@ if api_key:
 
             st.image(img, caption="Estudio cargado", use_container_width=True)
 
-            # 5. Botón de análisis
+            # 6. Botón de análisis
             if st.button("Analizar con IA"):
                 with st.spinner("Analizando informe..."):
                     try:
