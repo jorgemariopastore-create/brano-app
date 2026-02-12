@@ -1,1 +1,1 @@
-CardioReport AI - Generador de Informes
+CardioReport App
