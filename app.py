@@ -12,39 +12,45 @@ st.title("❤️ CardioReport AI - Versión Final")
 
 api_key = st.sidebar.text_input("Groq API Key:", type="password")
 
-def generar_word_perfecto(texto_ia, imagenes):
+def generar_word_profesional(texto_ia, imagenes):
     doc = Document()
     
-    # Configurar márgenes estrechos para que entren las 8 fotos
+    # Configuración de márgenes para que no se encime nada
     section = doc.sections[0]
-    section.left_margin = Inches(0.5)
-    section.right_margin = Inches(0.5)
-    section.top_margin = Inches(0.5)
-    section.bottom_margin = Inches(0.5)
+    section.left_margin = Inches(0.8)
+    section.right_margin = Inches(0.8)
+    section.top_margin = Inches(0.8)
+    section.bottom_margin = Inches(0.8)
 
-    # Título Principal
+    # Título Principal con mucho aire
     p_tit = doc.add_paragraph()
     p_tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_tit = p_tit.add_run('INFORME DE ECOCARDIOGRAMA DOPPLER COLOR')
     run_tit.bold = True
-    run_tit.font.size = Pt(14)
+    run_tit.font.size = Pt(16)
+    p_tit.paragraph_format.space_after = Pt(20)
 
-    # Cuerpo del Informe: Negrita y Subrayado forzado
+    # Procesamiento de líneas para Negritas, Subrayado y Espaciado
     for linea in texto_ia.split('\n'):
         linea = linea.strip()
         if not linea: continue
         
         p = doc.add_paragraph()
-        # Forzar formato en títulos de sección
-        if any(linea.startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"]):
+        
+        # Identificar Títulos (DATOS, I., II., III., IV., CONCLUSIÓN)
+        es_titulo = any(linea.startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"])
+        
+        if es_titulo:
             run = p.add_run(linea)
             run.bold = True
             run.underline = True
-            p.paragraph_format.space_before = Pt(8)
+            run.font.size = Pt(12)
+            p.paragraph_format.space_before = Pt(18) # Espacio antes del título para que no se encime
+            p.paragraph_format.space_after = Pt(10)  # Espacio después del título
         else:
             p.add_run(linea)
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        p.paragraph_format.space_after = Pt(2)
+            p.paragraph_format.space_after = Pt(6) # Espacio entre párrafos de contenido
 
     # ANEXO: 8 IMÁGENES (2 COLUMNAS X 4 FILAS)
     if imagenes:
@@ -53,11 +59,9 @@ def generar_word_perfecto(texto_ia, imagenes):
         r_an = p_an.add_run('ANEXO: IMÁGENES DEL ESTUDIO')
         r_an.bold = True
         r_an.underline = True
+        p_an.paragraph_format.space_after = Pt(15)
         
         table = doc.add_table(rows=0, cols=2)
-        # Ajustar ancho de tabla
-        table.autofit = False 
-        
         for i in range(0, len(imagenes), 2):
             row_cells = table.add_row().cells
             for j in range(2):
@@ -66,8 +70,8 @@ def generar_word_perfecto(texto_ia, imagenes):
                     cell_p = row_cells[j].paragraphs[0]
                     cell_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run_i = cell_p.add_run()
-                    # Tamaño 2.35 para asegurar 4 filas por página
-                    run_i.add_picture(io.BytesIO(img_data), width=Inches(2.35))
+                    # Tamaño 2.4 pulgadas para que entren 4 filas (8 fotos) por hoja
+                    run_i.add_picture(io.BytesIO(img_data), width=Inches(2.4))
                     cell_p.add_run(f"\nFig. {i + j + 1}")
     
     out = io.BytesIO()
@@ -76,7 +80,7 @@ def generar_word_perfecto(texto_ia, imagenes):
 
 if api_key:
     client = Groq(api_key=api_key)
-    archivos = st.file_uploader("Subir estudio", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    archivos = st.file_uploader("Subir estudio (PDF o Imágenes)", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
     if archivos:
         texto_crudo = ""
@@ -86,8 +90,8 @@ if api_key:
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
                         texto_crudo += pag.get_text() + "\n"
-                        # Extraer imágenes del PDF
-                        for img_index, img in enumerate(pag.get_images(full=True)):
+                        # Extraer fotos del PDF
+                        for img in pag.get_images(full=True):
                             xref = img[0]
                             base_image = d.extract_image(xref)
                             fotos.append(base_image["image"])
@@ -95,17 +99,18 @@ if api_key:
                 fotos.append(a.read())
 
         if st.button("Generar Informe Profesional"):
-            with st.spinner("Analizando datos médicos..."):
-                # PROMPT PARA MODELOS SIN VISIÓN: Obligamos a usar datos específicos
+            with st.spinner("Analizando y formateando..."):
+                # Mantenemos el Prompt que ya empezó a darte mejores resultados
                 prompt = f"""
-                Eres un cardiólogo experto. Redacta el informe basado en estos datos extraídos: {texto_crudo}
-                ESTRUCTURA OBLIGATORIA (Sigue el estilo de Manuel Baleiron):
-                DATOS DEL PACIENTE: Nombre, Edad, ID.
-                I. EVALUACIÓN ANATÓMICA Y CAVIDADES: Raíz Aórtica, Aurícula Izquierda, Vena Cava.
-                II. FUNCIÓN VENTRICULAR IZQUIERDA: FEy (%) Simpson, Volúmenes VDF/VSF.
-                III. EVALUACIÓN HEMODINÁMICA: Onda E, A, relación E/A y Doppler tisular e'.
-                IV. HALLAZGOS EXTRACARDÍACOS: Vena Porta y Renal.
-                CONCLUSIÓN FINAL: Resumen asertivo.
+                Actúa como cardiólogo. Organiza este texto en un informe técnico: {texto_crudo}
+                Sigue este esquema:
+                DATOS DEL PACIENTE
+                I. EVALUACIÓN ANATÓMICA Y CAVIDADES
+                II. FUNCIÓN VENTRICULAR IZQUIERDA
+                III. EVALUACIÓN HEMODINÁMICA
+                IV. HALLAZGOS EXTRACARDÍACOS
+                CONCLUSIÓN FINAL
+                Sé asertivo y usa terminología médica. No menciones que faltan datos.
                 """
                 
                 chat = client.chat.completions.create(
@@ -117,5 +122,5 @@ if api_key:
                 respuesta = chat.choices[0].message.content
                 st.markdown(respuesta)
                 
-                word_bin = generar_word_perfecto(respuesta, fotos)
-                st.download_button("📥 DESCARGAR INFORME WORD", word_bin, "Informe_Cardio.docx")
+                word_bin = generar_word_profesional(respuesta, fotos)
+                st.download_button("📥 DESCARGAR INFORME WORD", word_bin, "Informe_Cardiologico_Final.docx")
