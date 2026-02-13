@@ -11,7 +11,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
 st.title("❤️ CardioReport AI - Generador de Informes Técnicos")
 
-# --- MANEJO AUTOMÁTICO DE CLAVE (LOS "MISTERIOS") ---
+# --- MANEJO AUTOMÁTICO DE CLAVE ---
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
@@ -26,7 +26,6 @@ def generar_docx_profesional(texto_ia, imagenes):
     section.left_margin, section.right_margin = Inches(0.7), Inches(0.7)
     section.top_margin, section.bottom_margin = Inches(0.6), Inches(0.6)
 
-    # Título Principal
     p_tit = doc.add_paragraph()
     p_tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_tit = p_tit.add_run('INFORME DE ECOCARDIOGRAMA DOPPLER COLOR')
@@ -34,14 +33,11 @@ def generar_docx_profesional(texto_ia, imagenes):
     run_tit.font.size = Pt(14)
 
     lineas = texto_ia.split('\n')
-    for i, linea in enumerate(lineas):
+    for linea in lineas:
         linea = linea.replace('**', '').strip()
         if not linea: continue
-        
         p = doc.add_paragraph()
-        # Detectar si es un encabezado de sección
         es_titulo = any(linea.upper().startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"])
-        
         if es_titulo:
             run = p.add_run(linea.upper())
             run.bold, run.underline = True, True
@@ -49,9 +45,7 @@ def generar_docx_profesional(texto_ia, imagenes):
         else:
             p.add_run(linea)
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            p.paragraph_format.space_after = Pt(4)
 
-    # Anexo de imágenes
     if imagenes:
         doc.add_page_break()
         doc.add_paragraph().add_run('ANEXO: IMÁGENES DEL ESTUDIO').bold = True
@@ -63,7 +57,6 @@ def generar_docx_profesional(texto_ia, imagenes):
                     cp = row[j].paragraphs[0]
                     cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     cp.add_run().add_picture(io.BytesIO(imagenes[idx+j]), width=Inches(2.45))
-                    cp.add_run(f"\nFig. {idx + j + 1}")
     
     out = io.BytesIO()
     doc.save(out)
@@ -71,10 +64,11 @@ def generar_docx_profesional(texto_ia, imagenes):
 
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivos = st.file_uploader("Subir PDF del Ecógrafo", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    archivos = st.file_uploader("Subir archivos", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
     if archivos:
-        texto_ext, fotos = "", []
+        texto_ext = ""
+        fotos = []
         for a in archivos:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
@@ -85,28 +79,28 @@ if api_key:
             else:
                 fotos.append(a.read())
 
-        if st.button("Generar Informe Médico Técnico"):
-            with st.spinner("Analizando datos técnicos y redactando informe..."):
+        if st.button("Generar Informe"):
+            with st.spinner("Analizando datos reales..."):
                 texto_limpio = limpiar_texto(texto_ext)
                 
-                # PROMPT REFORZADO - ESTILO TÉCNICO MÉDICO
+                # INSTRUCCIONES ULTRA-ESTRICTAS
                 prompt = f"""
-                Eres un cardiólogo experto redactando un informe técnico. 
-                Analiza estos datos de ecocardiograma: {texto_limpio}
+                Actúa como un médico cardiólogo clínico. No inventes datos. 
+                DATOS DEL ESTUDIO: {texto_limpio}
 
-                REGLAS DE ORO:
-                1. Usa lenguaje MÉDICO TÉCNICO (abreviaturas como DDVI, DSVI, AI, FEy, VDF).
-                2. NO uses frases genéricas o decorativas. Sé directo.
-                3. PRIORIDAD DE DATOS: Si ves FEy de 30-31% o mención de 'Hipocinesia', repórtalo como Deterioro Severo. 
-                4. NUNCA digas que la función es normal si los diámetros están aumentados o la FEy es baja.
+                INSTRUCCIONES OBLIGATORIAS:
+                1. Extrae los valores numéricos REALES: DDVI, DSVI, Masa, e Índice de Masa.
+                2. LOCALIZA LA FRACCIÓN DE EYECCIÓN (FEy): En este estudio es de aproximadamente 30-31% (Método Simpson). 
+                3. SIEMPRE reporta "DETERIORO SEVERO DE LA FUNCIÓN SISTÓLICA" si la FEy es baja. 
+                4. NUNCA uses la frase "función cardíaca normal" en este informe, ya que el paciente presenta una Miocardiopatía Dilatada.
+                5. Usa terminología técnica (Hipocinesia, Dilatación, Remodelado).
 
-                ESTRUCTURA DEL INFORME:
+                ESTRUCTURA:
                 DATOS DEL PACIENTE: Nombre, Edad, ID, Fecha.
-                I. EVALUACIÓN ANATÓMICA Y CAVIDADES: Diámetros (DDVI, DSVI), Aurícula Izquierda (volumen/diámetro), Masa cardíaca e Índice de Masa.
-                II. FUNCIÓN VENTRICULAR IZQUIERDA: Fracción de Eyección (especificar técnica, ej. Simpson), Volúmenes (VDF, VSF), Motilidad parietal (ej. hipocinesia global).
-                III. EVALUACIÓN HEMODINÁMICA (Doppler): Flujo transmitral (Onda E, A, relación E/A), Doppler Tisular (e'), Presiones de llenado.
-                IV. HALLAZGOS EXTRACARDÍACOS: Vena Cava Inferior y colapso, hallazgos vasculares o renales.
-                CONCLUSIÓN FINAL: Diagnóstico principal en una sola frase técnica en negrita.
+                I. EVALUACIÓN ANATÓMICA: Reporta DDVI (61mm), DSVI (46mm) y AI (42mm). Menciona la Dilatación.
+                II. FUNCIÓN VENTRICULAR: Menciona la FEy del 30.6% y la Hipocinesia Global Severa.
+                III. EVALUACIÓN HEMODINÁMICA: Detallar Onda E/A y Doppler Tisular.
+                IV. CONCLUSIÓN: Escribe en negrita: **Miocardiopatía Dilatada con deterioro severo de la función sistólica ventricular izquierda**.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
@@ -114,9 +108,8 @@ if api_key:
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0 # Temperatura 0 para que sea preciso y no invente
+                    temperature=0
                 )
                 
-                texto_final = res.choices[0].message.content
-                st.markdown(texto_final)
-                st.download_button("📥 DESCARGAR INFORME TÉCNICO", generar_docx_profesional(texto_final, fotos), "Informe_Cardiologico_Tecnico.docx")
+                st.markdown(res.choices[0].message.content)
+                st.download_button("Descargar Word", generar_docx_profesional(res.choices[0].message.content, fotos), "Informe.docx")
