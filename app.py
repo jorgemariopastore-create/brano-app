@@ -8,8 +8,8 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # Configuración de página
-st.set_page_config(page_title="CardioReport AI", layout="wide")
-st.title("❤️ CardioReport AI - Sistema Automático")
+st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
+st.title("❤️ CardioReport AI - Generador de Informes Técnicos")
 
 # --- MANEJO AUTOMÁTICO DE CLAVE (LOS "MISTERIOS") ---
 if "GROQ_API_KEY" in st.secrets:
@@ -26,6 +26,7 @@ def generar_docx_profesional(texto_ia, imagenes):
     section.left_margin, section.right_margin = Inches(0.7), Inches(0.7)
     section.top_margin, section.bottom_margin = Inches(0.6), Inches(0.6)
 
+    # Título Principal
     p_tit = doc.add_paragraph()
     p_tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_tit = p_tit.add_run('INFORME DE ECOCARDIOGRAMA DOPPLER COLOR')
@@ -38,20 +39,19 @@ def generar_docx_profesional(texto_ia, imagenes):
         if not linea: continue
         
         p = doc.add_paragraph()
+        # Detectar si es un encabezado de sección
         es_titulo = any(linea.upper().startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"])
         
         if es_titulo:
             run = p.add_run(linea.upper())
             run.bold, run.underline = True, True
-            p.paragraph_format.space_before = Pt(14)
-            p.paragraph_format.keep_with_next = True 
+            p.paragraph_format.space_before = Pt(12)
         else:
             p.add_run(linea)
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            # Bloque de seguridad para que la firma no quede sola
-            if i > len(lineas) - 8:
-                p.paragraph_format.keep_with_next = True
+            p.paragraph_format.space_after = Pt(4)
 
+    # Anexo de imágenes
     if imagenes:
         doc.add_page_break()
         doc.add_paragraph().add_run('ANEXO: IMÁGENES DEL ESTUDIO').bold = True
@@ -85,17 +85,38 @@ if api_key:
             else:
                 fotos.append(a.read())
 
-        if st.button("Generar Informe Médico"):
-            with st.spinner("La IA está redactando el informe profesional..."):
+        if st.button("Generar Informe Médico Técnico"):
+            with st.spinner("Analizando datos técnicos y redactando informe..."):
                 texto_limpio = limpiar_texto(texto_ext)
-                prompt = f"Eres cardiólogo. Redacta un informe médico profesional basado en: {texto_limpio}. Esquema: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. HALLAZGOS EXTRACARDÍACOS y CONCLUSIÓN FINAL. Firma como Dr. FRANCISCO ALBERTO PASTORE MN 74144."
+                
+                # PROMPT REFORZADO - ESTILO TÉCNICO MÉDICO
+                prompt = f"""
+                Eres un cardiólogo experto redactando un informe técnico. 
+                Analiza estos datos de ecocardiograma: {texto_limpio}
+
+                REGLAS DE ORO:
+                1. Usa lenguaje MÉDICO TÉCNICO (abreviaturas como DDVI, DSVI, AI, FEy, VDF).
+                2. NO uses frases genéricas o decorativas. Sé directo.
+                3. PRIORIDAD DE DATOS: Si ves FEy de 30-31% o mención de 'Hipocinesia', repórtalo como Deterioro Severo. 
+                4. NUNCA digas que la función es normal si los diámetros están aumentados o la FEy es baja.
+
+                ESTRUCTURA DEL INFORME:
+                DATOS DEL PACIENTE: Nombre, Edad, ID, Fecha.
+                I. EVALUACIÓN ANATÓMICA Y CAVIDADES: Diámetros (DDVI, DSVI), Aurícula Izquierda (volumen/diámetro), Masa cardíaca e Índice de Masa.
+                II. FUNCIÓN VENTRICULAR IZQUIERDA: Fracción de Eyección (especificar técnica, ej. Simpson), Volúmenes (VDF, VSF), Motilidad parietal (ej. hipocinesia global).
+                III. EVALUACIÓN HEMODINÁMICA (Doppler): Flujo transmitral (Onda E, A, relación E/A), Doppler Tisular (e'), Presiones de llenado.
+                IV. HALLAZGOS EXTRACARDÍACOS: Vena Cava Inferior y colapso, hallazgos vasculares o renales.
+                CONCLUSIÓN FINAL: Diagnóstico principal en una sola frase técnica en negrita.
+
+                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
+                """
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0
+                    temperature=0 # Temperatura 0 para que sea preciso y no invente
                 )
                 
                 texto_final = res.choices[0].message.content
                 st.markdown(texto_final)
-                st.download_button("📥 DESCARGAR INFORME EN WORD", generar_docx_profesional(texto_final, fotos), "Informe_Cardiologia.docx")
+                st.download_button("📥 DESCARGAR INFORME TÉCNICO", generar_docx_profesional(texto_final, fotos), "Informe_Cardiologico_Tecnico.docx")
