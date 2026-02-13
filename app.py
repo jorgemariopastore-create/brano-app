@@ -3,19 +3,24 @@ import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
 import io
+import re
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI", layout="wide")
-st.title("❤️ CardioReport AI - Formato Profesional")
+st.title("❤️ CardioReport AI - Versión Estable")
 
 api_key = st.sidebar.text_input("Groq API Key:", type="password")
 
-def generar_docx_inteligente(texto_ia, imagenes):
+def limpiar_texto(t):
+    """Elimina caracteres que causan el UnicodeEncodeError"""
+    return t.encode("ascii", "ignore").decode("ascii")
+
+def generar_docx_profesional(texto_ia, imagenes):
     doc = Document()
     
-    # Márgenes equilibrados para aprovechar espacio
+    # Márgenes equilibrados
     section = doc.sections[0]
     section.left_margin = Inches(0.7)
     section.right_margin = Inches(0.7)
@@ -28,9 +33,8 @@ def generar_docx_inteligente(texto_ia, imagenes):
     run_tit = p_tit.add_run('INFORME DE ECOCARDIOGRAMA DOPPLER COLOR')
     run_tit.bold = True
     run_tit.font.size = Pt(14)
-    p_tit.paragraph_format.space_after = Pt(10)
+    p_tit.paragraph_format.space_after = Pt(12)
 
-    # Procesar líneas
     lineas = texto_ia.split('\n')
     for i, linea in enumerate(lineas):
         linea = linea.replace('**', '').strip()
@@ -39,12 +43,11 @@ def generar_docx_inteligente(texto_ia, imagenes):
         p = doc.add_paragraph()
         es_titulo = any(linea.upper().startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"])
         
-        # Lógica de formato
         if es_titulo:
             run = p.add_run(linea.upper())
             run.bold = True
             run.underline = True
-            p.paragraph_format.space_before = Pt(12)
+            p.paragraph_format.space_before = Pt(14)
             p.paragraph_format.space_after = Pt(6)
             p.paragraph_format.keep_with_next = True 
         else:
@@ -52,18 +55,18 @@ def generar_docx_inteligente(texto_ia, imagenes):
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             p.paragraph_format.space_after = Pt(4)
             
-            # Si estamos en la parte final (Conclusión o Firma), evitamos que se separen
-            if "CONCLUSIÓN" in texto_ia.split('\n')[max(0, i-5):i+1] or "DR." in linea.upper():
+            # Lógica inteligente: Si estamos cerca del final o en conclusión, mantenemos el bloque unido
+            # Esto evita que la firma quede sola en otra hoja
+            if i > len(lineas) - 8: 
                 p.paragraph_format.keep_with_next = True
 
-    # ANEXO: SIEMPRE EMPIEZA EN HOJA NUEVA
+    # ANEXO: SIEMPRE EN HOJA NUEVA
     if imagenes:
         doc.add_page_break() 
         p_an = doc.add_paragraph()
         r_an = p_an.add_run('ANEXO: IMÁGENES DEL ESTUDIO')
         r_an.bold = True
         r_an.underline = True
-        p_an.paragraph_format.space_after = Pt(10)
         
         table = doc.add_table(rows=0, cols=2)
         for i in range(0, len(imagenes), 2):
@@ -74,7 +77,6 @@ def generar_docx_inteligente(texto_ia, imagenes):
                     cell_p = row_cells[j].paragraphs[0]
                     cell_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run_i = cell_p.add_run()
-                    # Tamaño para asegurar 4 filas por página
                     run_i.add_picture(io.BytesIO(img_data), width=Inches(2.45))
                     cell_p.add_run(f"\nFig. {i + j + 1}")
     
@@ -83,6 +85,8 @@ def generar_docx_inteligente(texto_ia, imagenes):
     return out.getvalue()
 
 if api_key:
+    # Limpiamos la API Key de espacios en blanco que causan el error Unicode
+    api_key = api_key.strip()
     client = Groq(api_key=api_key)
     archivos = st.file_uploader("Subir archivos", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
@@ -101,16 +105,22 @@ if api_key:
 
         if st.button("Generar Informe"):
             with st.spinner("Procesando..."):
-                prompt = f"Actúa como cardiólogo. Redacta el informe basado en: {texto_ext}. Estructura: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. HALLAZGOS EXTRACARDÍACOS y CONCLUSIÓN FINAL. Firma al final como Dr. FRANCISCO ALBERTO PASTORE MN 74144."
+                # Limpiamos el texto de entrada para evitar el error de codificación
+                texto_limpio = limpiar_texto(texto_ext)
                 
-                res = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0
-                )
+                prompt = f"Eres cardiólogo. Redacta el informe médico basado en: {texto_limpio}. Usa el esquema: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. HALLAZGOS EXTRACARDÍACOS y CONCLUSIÓN FINAL. Firma como Dr. FRANCISCO ALBERTO PASTORE MN 74144."
                 
-                texto_final = res.choices[0].message.content
-                st.markdown(texto_final)
-                
-                wb = generar_docx_inteligente(texto_final, fotos)
-                st.download_button("📥 DESCARGAR WORD", wb, "Informe_Cardio_Final.docx")
+                try:
+                    res = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0
+                    )
+                    
+                    texto_final = res.choices[0].message.content
+                    st.markdown(texto_final)
+                    
+                    wb = generar_docx_profesional(texto_final, fotos)
+                    st.download_button("📥 DESCARGAR WORD", wb, "Informe_Final.docx")
+                except Exception as e:
+                    st.error(f"Error en la comunicación con la IA: {e}")
