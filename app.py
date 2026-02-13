@@ -8,14 +8,14 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI", layout="wide")
-st.title("❤️ CardioReport AI - Edición Final")
+st.title("❤️ CardioReport AI - Formato Profesional")
 
 api_key = st.sidebar.text_input("Groq API Key:", type="password")
 
-def generar_docx_perfecto(texto_ia, imagenes):
+def generar_docx_inteligente(texto_ia, imagenes):
     doc = Document()
     
-    # Configuración de márgenes profesionales
+    # Márgenes equilibrados para aprovechar espacio
     section = doc.sections[0]
     section.left_margin = Inches(0.7)
     section.right_margin = Inches(0.7)
@@ -28,34 +28,36 @@ def generar_docx_perfecto(texto_ia, imagenes):
     run_tit = p_tit.add_run('INFORME DE ECOCARDIOGRAMA DOPPLER COLOR')
     run_tit.bold = True
     run_tit.font.size = Pt(14)
-    p_tit.paragraph_format.space_after = Pt(12)
+    p_tit.paragraph_format.space_after = Pt(10)
 
-    # Procesar líneas y evitar cortes de hoja malos
+    # Procesar líneas
     lineas = texto_ia.split('\n')
-    for linea in lineas:
+    for i, linea in enumerate(lineas):
         linea = linea.replace('**', '').strip()
         if not linea: continue
         
         p = doc.add_paragraph()
-        # Detección estricta de títulos médicos
         es_titulo = any(linea.upper().startswith(s) for s in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"])
         
+        # Lógica de formato
         if es_titulo:
             run = p.add_run(linea.upper())
             run.bold = True
             run.underline = True
-            p.paragraph_format.space_before = Pt(14)
+            p.paragraph_format.space_before = Pt(12)
             p.paragraph_format.space_after = Pt(6)
-            p.paragraph_format.keep_with_next = True # OBLIGA al título a estar con su texto
+            p.paragraph_format.keep_with_next = True 
         else:
             p.add_run(linea)
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             p.paragraph_format.space_after = Pt(4)
-            p.paragraph_format.widow_control = True # Evita líneas sueltas
+            
+            # Si estamos en la parte final (Conclusión o Firma), evitamos que se separen
+            if "CONCLUSIÓN" in texto_ia.split('\n')[max(0, i-5):i+1] or "DR." in linea.upper():
+                p.paragraph_format.keep_with_next = True
 
-    # ANEXO: 8 IMÁGENES (Control de salto de página)
+    # ANEXO: SIEMPRE EMPIEZA EN HOJA NUEVA
     if imagenes:
-        # Insertar salto solo si hay imágenes, pegado al texto
         doc.add_page_break() 
         p_an = doc.add_paragraph()
         r_an = p_an.add_run('ANEXO: IMÁGENES DEL ESTUDIO')
@@ -63,7 +65,6 @@ def generar_docx_perfecto(texto_ia, imagenes):
         r_an.underline = True
         p_an.paragraph_format.space_after = Pt(10)
         
-        # Tabla optimizada para 2x4
         table = doc.add_table(rows=0, cols=2)
         for i in range(0, len(imagenes), 2):
             row_cells = table.add_row().cells
@@ -73,7 +74,7 @@ def generar_docx_perfecto(texto_ia, imagenes):
                     cell_p = row_cells[j].paragraphs[0]
                     cell_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run_i = cell_p.add_run()
-                    # Ancho fijo para mantener la cuadrícula de 8 por página
+                    # Tamaño para asegurar 4 filas por página
                     run_i.add_picture(io.BytesIO(img_data), width=Inches(2.45))
                     cell_p.add_run(f"\nFig. {i + j + 1}")
     
@@ -98,9 +99,9 @@ if api_key:
             else:
                 fotos.append(a.read())
 
-        if st.button("Generar Informe Perfecto"):
-            with st.spinner("Finalizando formato médico..."):
-                prompt = f"Actúa como cardiólogo. Redacta el informe basado en: {texto_ext}. Usa el esquema: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. HALLAZGOS EXTRACARDÍACOS y CONCLUSIÓN FINAL. Firma como Dr. FRANCISCO ALBERTO PASTORE MN 74144."
+        if st.button("Generar Informe"):
+            with st.spinner("Procesando..."):
+                prompt = f"Actúa como cardiólogo. Redacta el informe basado en: {texto_ext}. Estructura: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. HALLAZGOS EXTRACARDÍACOS y CONCLUSIÓN FINAL. Firma al final como Dr. FRANCISCO ALBERTO PASTORE MN 74144."
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
@@ -111,5 +112,5 @@ if api_key:
                 texto_final = res.choices[0].message.content
                 st.markdown(texto_final)
                 
-                wb = generar_docx_perfecto(texto_final, fotos)
-                st.download_button("📥 DESCARGAR WORD FINAL", wb, "Informe_Medico_Final.docx")
+                wb = generar_docx_inteligente(texto_final, fotos)
+                st.download_button("📥 DESCARGAR WORD", wb, "Informe_Cardio_Final.docx")
