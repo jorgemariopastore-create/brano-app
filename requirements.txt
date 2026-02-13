@@ -1,4 +1,5 @@
-streamlit
 groq
-Pillow
-PyMuPDF
+streamlit
+pymupdf
+pillow
+python-docx
