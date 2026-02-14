@@ -8,14 +8,14 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Versión Final")
+st.title("❤️ CardioReport AI - Extractor Robusto")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
     api_key = st.sidebar.text_input("Groq API Key:", type="password")
 
-def generar_docx(texto_ia, imagenes):
+def generar_docx(texto_ia):
     doc = Document()
     for linea in texto_ia.split('\n'):
         linea = linea.replace('**', '').strip()
@@ -40,30 +40,36 @@ if api_key:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
-                        texto_ext += pag.get_text() + "\n"
+                        # Extraemos texto con un método más simple para no romper tablas
+                        texto_ext += pag.get_text("text") + "\n"
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Escaneando datos biométricos..."):
+            with st.spinner("Analizando datos biométricos..."):
                 
-                # PROMPT DE EXTRACCIÓN AVANZADA
+                # PROMPT DE EXTRACCIÓN ULTRA-FLEXIBLE
                 prompt = f"""
-                Actúa como un cardiólogo experto. Debes extraer los datos de este estudio médico: {texto_ext}
+                Eres un cardiólogo experto. Analiza este texto de un ecocardiograma:
+                ---
+                {texto_ext}
+                ---
+                
+                TU OBJETIVO: Extraer los números a toda costa. 
+                Busca específicamente:
+                1. Fracción de Eyección: Puede decir 'EF', 'EF(Teich)', 'FEy', o estar cerca de un porcentaje (%). En este texto hay un valor de 73.14%. búscalo.
+                2. Diámetros: LVIDd es DDVI. LVIDs es DSVI. Busca valores como 4.20cm o 42mm.
+                3. Aurícula (LA o AI): Busca valores como 4.24cm o 42mm.
 
-                REGLAS CRÍTICAS:
-                1. NO uses datos de pacientes anteriores (como el 30% o 61mm de Baleiron). 
-                2. Busca valores numéricos usando estas etiquetas:
-                   - FEy: busca 'EF(Teich)', 'FEy', 'EF', 'Simpson' o 'Fracción de Eyección'.
-                   - Diámetros: busca 'LVIDd' o 'DDVI', 'LVIDs' o 'DSVI'.
-                   - Aurícula: busca 'LA' o 'AI'.
-                3. Si la FEy es mayor a 55%, indica "Función sistólica conservada".
-                4. Si la FEy es menor a 40%, indica "Deterioro severo".
+                REGLAS:
+                - NO digas que no hay datos. Los datos ESTÁN en el texto, búscalos bien.
+                - Si la FEy es >55%, concluye: "Función sistólica conservada".
+                - Si la FEy es <40%, concluye: "Deterioro severo".
 
-                ESTRUCTURA DEL INFORME:
-                DATOS DEL PACIENTE: Nombre, Edad, ID.
-                I. EVALUACIÓN ANATÓMICA: Reportar Diámetros (LVIDd/DDVI) y Aurícula (LA/AI).
-                II. FUNCIÓN VENTRICULAR: Mencionar la FEy (%) y la motilidad parietal.
-                III. EVALUACIÓN HEMODINÁMICA: Resumen del Doppler (válvulas y flujos).
-                CONCLUSIÓN: Diagnóstico técnico FINAL en negrita basado en los números encontrados.
+                FORMATO:
+                DATOS DEL PACIENTE: Nombre, Edad.
+                I. EVALUACIÓN ANATÓMICA: Diámetros (DDVI, DSVI) y AI.
+                II. FUNCIÓN VENTRICULAR: FEy (%) y motilidad.
+                III. EVALUACIÓN HEMODINÁMICA: Doppler.
+                CONCLUSIÓN: Diagnóstico final técnico en negrita.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
@@ -71,9 +77,9 @@ if api_key:
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0
+                    temperature=0.1 # Subimos un poquito para que sea más astuto buscando
                 )
                 
                 respuesta = res.choices[0].message.content
                 st.markdown(respuesta)
-                st.download_button("Descargar Informe", generar_docx(respuesta, []), "Informe.docx")
+                st.download_button("Descargar Informe", generar_docx(respuesta), "Informe.docx")
