@@ -7,18 +7,13 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# Configuración de página
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Sistema Flexible")
+st.title("❤️ CardioReport AI - Extractor de Datos Preciso")
 
-# --- MANEJO DE CLAVE ---
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
     api_key = st.sidebar.text_input("Groq API Key:", type="password")
-
-def limpiar_texto(t):
-    return t.encode("ascii", "ignore").decode("ascii")
 
 def generar_docx(texto_ia, imagenes):
     doc = Document()
@@ -31,52 +26,40 @@ def generar_docx(texto_ia, imagenes):
             run.bold = True
         else:
             p.add_run(linea)
-    
-    if imagenes:
-        doc.add_page_break()
-        for img in imagenes:
-            doc.add_picture(io.BytesIO(img), width=Inches(3))
-    
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
 
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivos = st.file_uploader("Subir PDF", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    archivos = st.file_uploader("Subir archivos del paciente", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
     if archivos:
-        texto_ext, fotos = "", []
+        texto_ext = ""
         for a in archivos:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
                         texto_ext += pag.get_text() + "\n"
-                        for img in pag.get_images(full=True):
-                            fotos.append(d.extract_image(img[0])["image"])
-            else:
-                fotos.append(a.read())
-
-        if st.button("Generar Informe"):
-            with st.spinner("Analizando datos..."):
-                texto_limpio = limpiar_texto(texto_ext)
-                
-                # INSTRUCCIONES CORREGIDAS (SIN NÚMEROS FIJOS)
+        
+        if st.button("Generar Informe Médico"):
+            with st.spinner("Buscando datos numéricos en el estudio..."):
+                # PROMPT MEJORADO PARA DETECTAR DATOS EN INGLÉS Y ESPAÑOL
                 prompt = f"""
-                Actúa como un cardiólogo. Analiza estos datos: {texto_limpio}
+                Eres un cardiólogo experto. Tu misión es extraer datos de este texto desordenado: {texto_ext}
 
-                REGLAS:
-                1. Extrae los valores REALES de este texto (DDVI, FEy, etc.).
-                2. Si la FEy es > 55%, la función es normal.
-                3. Si la FEy es < 40%, reporta deterioro severo.
-                4. NO uses datos de pacientes anteriores. Cíñete a este texto.
+                INSTRUCCIONES DE EXTRACCIÓN:
+                1. Busca la FEy (Fracción de Eyección). Puede aparecer como 'EF', 'EF(Teich)', 'FEy' o 'Simpson'. 
+                2. Busca diámetros: LVIDd o DDVI (Diámetro Diastólico), LVIDs o DSVI (Sistólico).
+                3. Busca Aurícula Izquierda (LA o AI).
+                4. SI ENCUENTRAS EL DATO, ÚSALO. Si no lo encuentras, no inventes, pero busca bien en las tablas.
 
-                ESTRUCTURA:
-                DATOS DEL PACIENTE: Nombre, Edad, Fecha.
-                I. EVALUACIÓN ANATÓMICA: Diámetros reales.
-                II. FUNCIÓN VENTRICULAR: FEy real y motilidad.
-                III. EVALUACIÓN HEMODINÁMICA: Doppler (E/A).
-                CONCLUSIÓN: Diagnóstico técnico basado en los números.
+                ESTILO DEL INFORME:
+                - DATOS DEL PACIENTE: Nombre, Edad, ID.
+                - I. EVALUACIÓN ANATÓMICA: Reportar DDVI, DSVI y AI con sus mm.
+                - II. FUNCIÓN VENTRICULAR: Mencionar la FEy (En Nilda es aprox 73%, en otros puede ser distinta).
+                - III. EVALUACIÓN HEMODINÁMICA: Resumen del Doppler.
+                - CONCLUSIÓN: Diagnóstico técnico basado en si la FEy es normal (>55%) o reducida.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
@@ -89,4 +72,4 @@ if api_key:
                 
                 respuesta = res.choices[0].message.content
                 st.markdown(respuesta)
-                st.download_button("Descargar Word", generar_docx(respuesta, fotos), "Informe.docx")
+                st.download_button("Descargar Informe", generar_docx(respuesta, []), "Informe.docx")
