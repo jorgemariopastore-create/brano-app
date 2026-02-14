@@ -3,13 +3,12 @@ import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
 import io
-import re
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Extractor de Datos")
+st.set_page_config(page_title="CardioReport AI - SonoScape E3 Edition", layout="wide")
+st.title("❤️ CardioReport AI - Optimizado para SonoScape E3")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -33,7 +32,7 @@ def generar_docx(texto_ia):
 
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivos = st.file_uploader("Subir archivos del paciente", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    archivos = st.file_uploader("Subir archivos del SonoScape E3", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
     if archivos:
         texto_ext = ""
@@ -41,34 +40,39 @@ if api_key:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
-                        # Extraemos texto de manera más simple para no romper las tablas de datos
-                        texto_ext += pag.get_text("text") + "\n"
+                        # Método de extracción optimizado para tablas de SonoScape
+                        texto_ext += pag.get_text("words") 
+                        texto_ext = str(texto_ext) + "\n"
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Buscando datos técnicos..."):
+            with st.spinner("Analizando reporte de SonoScape E3..."):
                 
-                # PROMPT DE EXTRACCIÓN CON PISTAS ESPECÍFICAS
                 prompt = f"""
-                Actúa como un cardiólogo experto. Debes extraer datos de este texto:
+                Eres un cardiólogo experto procesando datos de un ecógrafo SonoScape E3.
+                Analiza el siguiente texto crudo y extrae los valores numéricos:
                 ---
                 {texto_ext}
                 ---
 
-                GUÍA DE BÚSQUEDA PARA ESTE PACIENTE:
-                1. Busca el número al lado de 'LVIDd' o 'DDVI'. (En Nilda es 4.20 o 4.2).
-                2. Busca el número al lado de 'EF(Teich)', 'EF' o 'FEy'. (En Nilda es 73.14).
-                3. Busca 'LA' o 'AI' (En Nilda es 4.24).
-                
-                INSTRUCCIONES:
-                - Si FEy > 55%: Conclusión = "Función sistólica conservada".
-                - Si FEy < 45%: Conclusión = "Deterioro de la función sistólica".
-                - Redacta el informe de forma técnica y profesional.
+                DICCIONARIO DE TRADUCCIÓN SONOSCAPE E3:
+                - LVIDd = Diámetro Diastólico Ventrículo Izquierdo (Ej: 4.20 cm o 42 mm).
+                - LVIDs = Diámetro Sistólico Ventrículo Izquierdo (Ej: 2.42 cm).
+                - EF(Teich) o EF = Fracción de Eyección (Ej: 73.14%).
+                - LA Diam o LA = Aurícula Izquierda (Ej: 4.24 cm).
+                - IVSd = Tabique Interventricular.
+                - LVPWd = Pared Posterior.
 
-                FORMATO:
+                INSTRUCCIONES:
+                1. Extrae Nombre, Edad e ID del paciente.
+                2. Si EF > 55% concluye "Función sistólica conservada".
+                3. Si EF < 45% concluye "Deterioro de la función sistólica".
+                4. Usa un tono técnico y seco.
+
+                ESTRUCTURA:
                 DATOS DEL PACIENTE: Nombre, Edad.
-                I. EVALUACIÓN ANATÓMICA: Diámetros y Aurícula.
-                II. FUNCIÓN VENTRICULAR: FEy y motilidad.
-                III. EVALUACIÓN HEMODINÁMICA: Doppler.
+                I. EVALUACIÓN ANATÓMICA: Reportar DDVI (LVIDd), DSVI (LVIDs) y AI (LA).
+                II. FUNCIÓN VENTRICULAR: Mencionar FEy (EF) y técnica.
+                III. EVALUACIÓN HEMODINÁMICA: Doppler (Vmax, Gradientes).
                 CONCLUSIÓN: Diagnóstico final en negrita.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
@@ -76,11 +80,11 @@ if api_key:
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "system", "content": "Eres un cardiólogo que encuentra datos numéricos incluso en textos desordenados."},
+                    messages=[{"role": "system", "content": "Eres un cardiólogo experto en equipos SonoScape."},
                               {"role": "user", "content": prompt}],
                     temperature=0
                 )
                 
                 respuesta = res.choices[0].message.content
                 st.markdown(respuesta)
-                st.download_button("📥 Descargar Word", generar_docx(respuesta), "Informe_Cardio.docx")
+                st.download_button("📥 Descargar Informe", generar_docx(respuesta), "Informe_Cardio.docx")
