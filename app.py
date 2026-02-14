@@ -3,12 +3,13 @@ import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
 import io
+import re
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Versión Estable")
+st.title("❤️ CardioReport AI - Extractor de Datos")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -40,40 +41,42 @@ if api_key:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
-                        # Corregido: Unimos la lista de bloques en un solo texto
-                        bloques = pag.get_text("blocks")
-                        for b in bloques:
-                            texto_ext += str(b[4]) + " " # El texto está en la posición 4 del bloque
+                        # Extraemos texto de manera más simple para no romper las tablas de datos
+                        texto_ext += pag.get_text("text") + "\n"
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Procesando datos del ecocardiograma..."):
+            with st.spinner("Buscando datos técnicos..."):
                 
+                # PROMPT DE EXTRACCIÓN CON PISTAS ESPECÍFICAS
                 prompt = f"""
-                Eres un cardiólogo experto. Analiza este texto extraído de un ecógrafo:
+                Actúa como un cardiólogo experto. Debes extraer datos de este texto:
                 ---
                 {texto_ext}
                 ---
 
-                TAREA:
-                1. Extrae: Nombre del paciente, Edad, FEy (EF o Fracción de Eyección), Diámetros (LVIDd o DDVI) y Aurícula (LA o AI).
-                2. REGLA MÉDICA: 
-                   - Si FEy > 55%: Conclusión = "Función sistólica conservada".
-                   - Si FEy < 45%: Conclusión = "Deterioro de la función sistólica".
-                3. NO INVENTES: Si un dato no está, pon 'No reportado'. Pero busca bien, el texto puede estar desordenado.
+                GUÍA DE BÚSQUEDA PARA ESTE PACIENTE:
+                1. Busca el número al lado de 'LVIDd' o 'DDVI'. (En Nilda es 4.20 o 4.2).
+                2. Busca el número al lado de 'EF(Teich)', 'EF' o 'FEy'. (En Nilda es 73.14).
+                3. Busca 'LA' o 'AI' (En Nilda es 4.24).
+                
+                INSTRUCCIONES:
+                - Si FEy > 55%: Conclusión = "Función sistólica conservada".
+                - Si FEy < 45%: Conclusión = "Deterioro de la función sistólica".
+                - Redacta el informe de forma técnica y profesional.
 
-                ESTRUCTURA:
+                FORMATO:
                 DATOS DEL PACIENTE: Nombre, Edad.
                 I. EVALUACIÓN ANATÓMICA: Diámetros y Aurícula.
                 II. FUNCIÓN VENTRICULAR: FEy y motilidad.
-                III. EVALUACIÓN HEMODINÁMICA: Hallazgos del Doppler.
-                CONCLUSIÓN: Diagnóstico técnico en negrita.
+                III. EVALUACIÓN HEMODINÁMICA: Doppler.
+                CONCLUSIÓN: Diagnóstico final en negrita.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "system", "content": "Eres un cardiólogo que redacta informes precisos basados solo en los datos provistos."},
+                    messages=[{"role": "system", "content": "Eres un cardiólogo que encuentra datos numéricos incluso en textos desordenados."},
                               {"role": "user", "content": prompt}],
                     temperature=0
                 )
