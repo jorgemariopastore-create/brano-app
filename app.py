@@ -8,7 +8,7 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Extractor de Datos Preciso")
+st.title("❤️ CardioReport AI - Versión Final")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -43,23 +43,27 @@ if api_key:
                         texto_ext += pag.get_text() + "\n"
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Buscando datos numéricos en el estudio..."):
-                # PROMPT MEJORADO PARA DETECTAR DATOS EN INGLÉS Y ESPAÑOL
+            with st.spinner("Escaneando datos biométricos..."):
+                
+                # PROMPT DE EXTRACCIÓN AVANZADA
                 prompt = f"""
-                Eres un cardiólogo experto. Tu misión es extraer datos de este texto desordenado: {texto_ext}
+                Actúa como un cardiólogo experto. Debes extraer los datos de este estudio médico: {texto_ext}
 
-                INSTRUCCIONES DE EXTRACCIÓN:
-                1. Busca la FEy (Fracción de Eyección). Puede aparecer como 'EF', 'EF(Teich)', 'FEy' o 'Simpson'. 
-                2. Busca diámetros: LVIDd o DDVI (Diámetro Diastólico), LVIDs o DSVI (Sistólico).
-                3. Busca Aurícula Izquierda (LA o AI).
-                4. SI ENCUENTRAS EL DATO, ÚSALO. Si no lo encuentras, no inventes, pero busca bien en las tablas.
+                REGLAS CRÍTICAS:
+                1. NO uses datos de pacientes anteriores (como el 30% o 61mm de Baleiron). 
+                2. Busca valores numéricos usando estas etiquetas:
+                   - FEy: busca 'EF(Teich)', 'FEy', 'EF', 'Simpson' o 'Fracción de Eyección'.
+                   - Diámetros: busca 'LVIDd' o 'DDVI', 'LVIDs' o 'DSVI'.
+                   - Aurícula: busca 'LA' o 'AI'.
+                3. Si la FEy es mayor a 55%, indica "Función sistólica conservada".
+                4. Si la FEy es menor a 40%, indica "Deterioro severo".
 
-                ESTILO DEL INFORME:
-                - DATOS DEL PACIENTE: Nombre, Edad, ID.
-                - I. EVALUACIÓN ANATÓMICA: Reportar DDVI, DSVI y AI con sus mm.
-                - II. FUNCIÓN VENTRICULAR: Mencionar la FEy (En Nilda es aprox 73%, en otros puede ser distinta).
-                - III. EVALUACIÓN HEMODINÁMICA: Resumen del Doppler.
-                - CONCLUSIÓN: Diagnóstico técnico basado en si la FEy es normal (>55%) o reducida.
+                ESTRUCTURA DEL INFORME:
+                DATOS DEL PACIENTE: Nombre, Edad, ID.
+                I. EVALUACIÓN ANATÓMICA: Reportar Diámetros (LVIDd/DDVI) y Aurícula (LA/AI).
+                II. FUNCIÓN VENTRICULAR: Mencionar la FEy (%) y la motilidad parietal.
+                III. EVALUACIÓN HEMODINÁMICA: Resumen del Doppler (válvulas y flujos).
+                CONCLUSIÓN: Diagnóstico técnico FINAL en negrita basado en los números encontrados.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
