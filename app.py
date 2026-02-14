@@ -8,7 +8,7 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
-st.title("❤️ CardioReport AI - Extractor de Alta Precisión")
+st.title("❤️ CardioReport AI - Versión Estable")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -40,36 +40,32 @@ if api_key:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
-                        # Extraemos texto bloque por bloque para no perder datos de tablas
-                        texto_ext += pag.get_text("blocks")
-                        texto_ext = str(texto_ext) + "\n"
+                        # Corregido: Unimos la lista de bloques en un solo texto
+                        bloques = pag.get_text("blocks")
+                        for b in bloques:
+                            texto_ext += str(b[4]) + " " # El texto está en la posición 4 del bloque
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Analizando tablas y valores técnicos..."):
+            with st.spinner("Procesando datos del ecocardiograma..."):
                 
-                # EL PROMPT "CAZADOR" DE DATOS
                 prompt = f"""
-                Eres un cardiólogo experto. Tu ÚNICA MISIÓN es rescatar los números de este texto:
+                Eres un cardiólogo experto. Analiza este texto extraído de un ecógrafo:
                 ---
                 {texto_ext}
                 ---
 
-                GUÍA DE BÚSQUEDA (Los datos están ahí, no te rindas):
-                1. FRACCIÓN DE EYECCIÓN (FEy): Busca el número junto a 'EF', 'EF(Teich)', 'EF(S)', 'FE' o '%'. (Ejemplo: 73.14% o 30.6%).
-                2. DIÁMETROS: Busca 'LVIDd' o 'DDVI' (suele ser 4.20cm o 6.1cm). Busca 'LVIDs' o 'DSVI'.
-                3. AURÍCULA: Busca 'LA' o 'AI' (suele ser 4.24cm).
-
-                REGLAS DE ORO:
-                - SIEMPRE informa un valor numérico si lo encuentras.
-                - Si FEy > 55%: Conclusión = "Función sistólica conservada".
-                - Si FEy < 45%: Conclusión = "Deterioro de la función sistólica".
-                - Prohibido decir "No hay datos". Si no encuentras el nombre, busca el número que parezca una medida cardíaca.
+                TAREA:
+                1. Extrae: Nombre del paciente, Edad, FEy (EF o Fracción de Eyección), Diámetros (LVIDd o DDVI) y Aurícula (LA o AI).
+                2. REGLA MÉDICA: 
+                   - Si FEy > 55%: Conclusión = "Función sistólica conservada".
+                   - Si FEy < 45%: Conclusión = "Deterioro de la función sistólica".
+                3. NO INVENTES: Si un dato no está, pon 'No reportado'. Pero busca bien, el texto puede estar desordenado.
 
                 ESTRUCTURA:
                 DATOS DEL PACIENTE: Nombre, Edad.
                 I. EVALUACIÓN ANATÓMICA: Diámetros y Aurícula.
                 II. FUNCIÓN VENTRICULAR: FEy y motilidad.
-                III. EVALUACIÓN HEMODINÁMICA: Doppler y flujos.
+                III. EVALUACIÓN HEMODINÁMICA: Hallazgos del Doppler.
                 CONCLUSIÓN: Diagnóstico técnico en negrita.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
@@ -77,11 +73,11 @@ if api_key:
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "system", "content": "Eres un asistente médico que extrae datos numéricos con precisión 100%."},
+                    messages=[{"role": "system", "content": "Eres un cardiólogo que redacta informes precisos basados solo en los datos provistos."},
                               {"role": "user", "content": prompt}],
                     temperature=0
                 )
                 
                 respuesta = res.choices[0].message.content
                 st.markdown(respuesta)
-                st.download_button("📥 Descargar Informe en Word", generar_docx(respuesta), "Informe_Final.docx")
+                st.download_button("📥 Descargar Word", generar_docx(respuesta), "Informe_Cardio.docx")
