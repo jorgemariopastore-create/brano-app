@@ -7,8 +7,8 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-st.set_page_config(page_title="CardioReport AI - SonoScape E3 Edition", layout="wide")
-st.title("❤️ CardioReport AI - Optimizado para SonoScape E3")
+st.set_page_config(page_title="CardioReport AI - SonoScape E3 Pro", layout="wide")
+st.title("❤️ CardioReport AI - Extractor SonoScape E3")
 
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
@@ -32,7 +32,7 @@ def generar_docx(texto_ia):
 
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivos = st.file_uploader("Subir archivos del SonoScape E3", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    archivos = st.file_uploader("Subir reportes del SonoScape E3", type=["pdf", "jpg", "png"], accept_multiple_files=True)
 
     if archivos:
         texto_ext = ""
@@ -40,51 +40,49 @@ if api_key:
             if a.type == "application/pdf":
                 with fitz.open(stream=a.read(), filetype="pdf") as d:
                     for pag in d:
-                        # Método de extracción optimizado para tablas de SonoScape
-                        texto_ext += pag.get_text("words") 
-                        texto_ext = str(texto_ext) + "\n"
+                        # CORRECCIÓN DEL ERROR: Extraemos palabras y las unimos en un string
+                        palabras = pag.get_text("words")
+                        # Cada 'p' es una tupla, el texto está en p[4]
+                        texto_pag = " ".join([p[4] for p in palabras])
+                        texto_ext += texto_pag + "\n"
         
         if st.button("Generar Informe Médico"):
-            with st.spinner("Analizando reporte de SonoScape E3..."):
+            with st.spinner("Analizando datos del SonoScape E3..."):
                 
                 prompt = f"""
-                Eres un cardiólogo experto procesando datos de un ecógrafo SonoScape E3.
-                Analiza el siguiente texto crudo y extrae los valores numéricos:
+                Actúa como un cardiólogo experto. Analiza este texto extraído de un ecógrafo SonoScape E3:
                 ---
                 {texto_ext}
                 ---
 
-                DICCIONARIO DE TRADUCCIÓN SONOSCAPE E3:
-                - LVIDd = Diámetro Diastólico Ventrículo Izquierdo (Ej: 4.20 cm o 42 mm).
-                - LVIDs = Diámetro Sistólico Ventrículo Izquierdo (Ej: 2.42 cm).
-                - EF(Teich) o EF = Fracción de Eyección (Ej: 73.14%).
-                - LA Diam o LA = Aurícula Izquierda (Ej: 4.24 cm).
-                - IVSd = Tabique Interventricular.
-                - LVPWd = Pared Posterior.
+                MISION DE EXTRACCION (Busca estos términos del SonoScape):
+                - 'EF(Teich)' o 'EF' -> Fracción de Eyección (Ej: 73.14%).
+                - 'LVIDd' -> Diámetro Diastólico (Ej: 4.20 cm).
+                - 'LVIDs' -> Diámetro Sistólico (Ej: 2.42 cm).
+                - 'LA Diam' o 'LA' -> Aurícula Izquierda (Ej: 4.24 cm).
 
-                INSTRUCCIONES:
-                1. Extrae Nombre, Edad e ID del paciente.
-                2. Si EF > 55% concluye "Función sistólica conservada".
-                3. Si EF < 45% concluye "Deterioro de la función sistólica".
-                4. Usa un tono técnico y seco.
+                REGLAS DE NEGOCIO:
+                1. Si la FEy/EF es > 55%: Conclusión = "Función sistólica conservada".
+                2. Si la FEy/EF es < 45%: Conclusión = "Deterioro de la función sistólica".
+                3. No inventes datos. Si no encuentras el valor, busca el número más cercano a las etiquetas mencionadas.
 
-                ESTRUCTURA:
-                DATOS DEL PACIENTE: Nombre, Edad.
-                I. EVALUACIÓN ANATÓMICA: Reportar DDVI (LVIDd), DSVI (LVIDs) y AI (LA).
-                II. FUNCIÓN VENTRICULAR: Mencionar FEy (EF) y técnica.
-                III. EVALUACIÓN HEMODINÁMICA: Doppler (Vmax, Gradientes).
-                CONCLUSIÓN: Diagnóstico final en negrita.
+                ESTRUCTURA DEL INFORME:
+                DATOS DEL PACIENTE: Nombre, Edad, ID.
+                I. EVALUACIÓN ANATÓMICA: Reportar DDVI (LVIDd), DSVI (LVIDs) y Aurícula Izquierda (LA).
+                II. FUNCIÓN VENTRICULAR: Mencionar FEy (EF) y técnica utilizada (Teichholz).
+                III. EVALUACIÓN HEMODINÁMICA: Hallazgos del Doppler.
+                CONCLUSIÓN: Diagnóstico final técnico en negrita.
 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144.
                 """
                 
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "system", "content": "Eres un cardiólogo experto en equipos SonoScape."},
+                    messages=[{"role": "system", "content": "Eres un cardiólogo que extrae medidas precisas de tablas técnicas."},
                               {"role": "user", "content": prompt}],
                     temperature=0
                 )
                 
                 respuesta = res.choices[0].message.content
                 st.markdown(respuesta)
-                st.download_button("📥 Descargar Informe", generar_docx(respuesta), "Informe_Cardio.docx")
+                st.download_button("📥 Descargar Word", generar_docx(respuesta), "Informe_Cardio.docx")
