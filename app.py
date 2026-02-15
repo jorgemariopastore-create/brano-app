@@ -7,92 +7,105 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# Configuración de página
+# Configuración de interfaz
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    .stButton>button { background-color: #d32f2f; color: white; font-weight: bold; border-radius: 8px; }
-    .report-text { background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #e0e0e0; }
+    .stButton>button { background-color: #d32f2f; color: white; font-weight: bold; border-radius: 8px; height: 3em; }
+    .report-box { background-color: #ffffff; padding: 25px; border-radius: 10px; border: 1px solid #dee2e6; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("❤️ CardioReport AI - Formato Dr. Pastore")
-st.info("Esta versión incluye lógica de extracción profunda para casos complejos como Baleiron.")
+st.title("❤️ Sistema de Informes Dr. Pastore")
+st.write("Detección automática de valores críticos y diagnósticos de severidad.")
 
+# API Key de Groq
 api_key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("Groq API Key:", type="password")
 
-def crear_word_profesional(texto):
+def crear_word(texto):
     doc = Document()
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
+    titulo = doc.add_paragraph()
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = titulo.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     run.bold = True
     run.font.size = Pt(14)
     
     for linea in texto.split('\n'):
         linea = linea.replace('**', '').strip()
         if not linea: continue
-        parrafo = doc.add_paragraph()
-        run_l = parrafo.add_run(linea)
+        p = doc.add_paragraph()
+        r = p.add_run(linea)
         if any(linea.startswith(x) for x in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"]):
-            run_l.bold = True
+            r.bold = True
     
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    return buffer.getvalue()
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivos = st.file_uploader("Subir PDF del Ecógrafo", accept_multiple_files=True)
+    archivo = st.file_uploader("Cargar PDF del Paciente", type=["pdf"])
 
-    if archivos and st.button("GENERAR INFORME MÉDICO"):
-        with st.spinner("Analizando coordenadas y valores..."):
-            texto_crudo = ""
-            for a in archivos:
-                if a.type == "application/pdf":
-                    with fitz.open(stream=a.read(), filetype="pdf") as d:
-                        for pag in d: texto_crudo += pag.get_text()
+    if archivo and st.button("PROCESAR ESTUDIO MÉDICO"):
+        with st.spinner("Extrayendo datos y aplicando criterios de cardiología..."):
+            # 1. Extracción de texto del PDF
+            texto_pdf = ""
+            with fitz.open(stream=archivo.read(), filetype="pdf") as doc:
+                for pagina in doc:
+                    texto_pdf += pagina.get_text()
 
-            # PROMPT DE EXTRACCIÓN FORZADA
-            prompt = f"""
-            Eres el Dr. Francisco Alberto Pastore. Debes generar un informe médico BASADO EXCLUSIVAMENTE en estos datos crudos: 
-            ---
-            {texto_crudo}
-            ---
+            # 2. Prompt con Lógica Médica Estricta
+            prompt_estricto = f"""
+            Eres el Dr. Francisco Alberto Pastore. Tu misión es analizar el siguiente texto extraído de un ecógrafo y generar un informe impecable.
+            
+            TEXTO DEL ESTUDIO:
+            {texto_pdf}
 
-            INSTRUCCIONES CRÍTICAS:
-            1. No digas "No disponible". Los datos están en el texto, búscalos por sus siglas en inglés o español:
-               - DDVI es LVIDd o Diastolic.
-               - DSVI es LVIDs o Systolic.
-               - FEy es EF, Simpson o Teich.
-               - AI es LA, Left Atrium o Aurícula Izq.
-            2. Si la FEy es < 35% (como el 31% de Baleiron), la conclusión DEBE ser: "Deterioro SEVERO de la función sistólica".
-            3. Si el DDVI es > 57mm (como el 61mm de Baleiron), debe decir "Dilatación del ventrículo izquierdo".
-            4. Menciona siempre la Motilidad (ej: "Hipocinesia global" si aparece en el texto).
-            5. Convierte CM a MM (6.1 cm -> 61 mm).
+            INSTRUCCIONES DE EXTRACCIÓN (PROHIBIDO DECIR "NO DISPONIBLE"):
+            - DDVI: Búscalo como 'DDVI', 'LVIDd' o 'Diastolic'. Si dice 6.1 cm, escribe 61 mm.
+            - DSVI: Búscalo como 'DSVI', 'LVIDs' o 'Systolic'.
+            - FEy: Búscalo como 'FEy', 'EF', 'Simpson' o 'Teich'.
+            - MOTILIDAD: Si el texto menciona 'Hipocinesia global', inclúyelo.
 
-            FORMATO REQUERIDO:
-            DATOS DEL PACIENTE: Nombre, Edad, ID, Fecha.
-            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, AI, Septum, Pared en mm).
-            II. FUNCIÓN VENTRICULAR: (FEy % y descripción de motilidad).
-            III. EVALUACIÓN HEMODINÁMICA: (Doppler y Vena Cava).
-            IV. CONCLUSIÓN: (Diagnóstico en negrita y contundente).
+            REGLAS DIAGNÓSTICAS (CRITERIO PASTORE):
+            - Si FEy < 35%: La CONCLUSIÓN debe ser "Deterioro SEVERO de la función sistólica ventricular izquierda".
+            - Si DDVI > 57 mm: Debes incluir "DILATACIÓN del ventrículo izquierdo".
+            - Si hay ambos: "Miocardiopatía Dilatada con deterioro severo de la función sistólica".
+
+            FORMATO DE SALIDA:
+            DATOS DEL PACIENTE: (Nombre, Edad, ID, Fecha)
+            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, AI, Septum, Pared en mm)
+            II. FUNCIÓN VENTRICULAR: (FEy % y motilidad)
+            III. EVALUACIÓN HEMODINÁMICA: (Valvular y Doppler)
+            IV. CONCLUSIÓN: (Diagnóstico final en NEGRITA)
             
             Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             """
 
             try:
+                # Usamos Llama 3 para máxima precisión en tablas
                 chat = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "system", "content": "Eres un cardiólogo experto que nunca omite datos."},
-                              {"role": "user", "content": prompt}],
-                    temperature=0
+                    messages=[
+                        {"role": "system", "content": "Eres un cardiólogo que extrae datos con precisión quirúrgica. No omites valores numéricos."},
+                        {"role": "user", "content": prompt_estricto}
+                    ],
+                    temperature=0 # Cero creatividad, 100% precisión
                 )
-                res = chat.choices[0].message.content
-                st.subheader("Informe Generado:")
-                st.markdown(f'<div class="report-text">{res}</div>', unsafe_allow_html=True)
-                st.download_button("📥 Descargar Word", crear_word_profesional(res), "Informe_Final.docx")
+                
+                informe = chat.choices[0].message.content
+                
+                st.markdown(f'<div class="report-box">{informe}</div>', unsafe_allow_html=True)
+                
+                st.download_button(
+                    label="📥 Descargar Informe en Word",
+                    data=crear_word(informe),
+                    file_name=f"Informe_Pastore.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error técnico: {e}")
+else:
+    st.warning("Introduce tu API Key para activar el sistema.")
