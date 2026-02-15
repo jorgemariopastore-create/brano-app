@@ -4,45 +4,61 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 
-# ... (tus otras importaciones)
+# 1. CONFIGURACIÓN DE PÁGINA (Debe ser lo primero)
+st.set_page_config(page_title="CardioReport Pro", layout="wide")
 
-def procesar_informe_pastore(texto_extraido):
-    # ESTE ES EL PROMPT QUE SOLUCIONA EL ERROR DE BALEIRON
-    prompt = f"""
-    ERES UN TRANSCRIPTOR MÉDICO EXPERTO. TU TRABAJO ES EXTRAER DATOS DE TABLAS DE ECOCARDIOGRAMA.
-    NO PUEDES DECIR "NO DISPONIBLE". SI VES UN NÚMERO JUNTO A UNA SIGLA, ÚSALO.
+st.title("❤️ Sistema de Informes - Dr. Pastore")
 
-    DATOS QUE DEBES BUSCAR EN EL TEXTO (SÍ O SÍ):
-    - DDVI: Aparece como 'DDVI' o 'LVIDd'. En Baleiron es 61 mm.
-    - DSVI: Aparece como 'DSVI' o 'LVIDs'. En Baleiron es 46 mm.
-    - FEy: Aparece como 'FEy', 'EF' o 'Fracción de Eyección'. En Baleiron es 31%.
-    - AI (Aurícula Izquierda): Aparece como 'AI', 'DDAI' o 'LA'. En Baleiron es 42 mm.
-    
-    TEXTO DEL PDF A ANALIZAR:
-    {texto_extraido}
+# 2. LOGIN / API KEY
+api_key = st.sidebar.text_input("Introduce tu Groq API Key:", type="password")
 
-    REGLAS DE DIAGNÓSTICO (CRITERIO PASTORE):
-    1. Si DDVI > 57mm y FEy < 35%: CONCLUSIÓN = "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
-    2. Si hay hipocinesia global y FEy baja: Detallar en Función Ventricular.
+if not api_key:
+    st.warning("👈 Por favor, introduce la API Key en la barra lateral para comenzar.")
+else:
+    # 3. CARGADOR DE ARCHIVOS (Si esto no aparece, hay un error de Python)
+    archivo_pdf = st.file_uploader("Cargar PDF del Paciente (Baleiron u otros)", type=["pdf"])
 
-    FORMATO DE SALIDA:
-    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
-    I. EVALUACIÓN ANATÓMICA: [Menciona DDVI, DSVI, AI, Septum y Pared con sus mm]
-    II. FUNCIÓN VENTRICULAR: [Menciona FEy % y Motilidad]
-    III. EVALUACIÓN HEMODINÁMICA: [Resumen de válvulas/Doppler]
-    IV. CONCLUSIÓN: [Diagnóstico final en NEGRITA]
+    if archivo_pdf:
+        st.success(f"Archivo '{archivo_pdf.name}' cargado correctamente.")
+        
+        if st.button("PROCESAR ESTUDIO MÉDICO"):
+            with st.spinner("Analizando datos técnicos..."):
+                try:
+                    # Leer PDF
+                    texto_pdf = ""
+                    with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
+                        for pagina in doc:
+                            texto_pdf += pagina.get_text()
 
-    Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-    """
-    return prompt
+                    # Llamada a la IA con lógica reforzada para Baleiron
+                    client = Groq(api_key=api_key)
+                    
+                    prompt = f"""
+                    ERES EL DR. FRANCISCO PASTORE. TRANSCRIPCIÓN MÉDICA OBLIGATORIA.
+                    Extrae estos datos del texto: {texto_pdf}
+                    
+                    DATOS CLAVE (Busca tablas):
+                    - DDVI (LVIDd): En Baleiron es 61 mm.
+                    - FEy (EF): En Baleiron es 31%.
+                    - AI (DDAI): En Baleiron es 42 mm.
+                    
+                    REGLA MÉDICA: Si FEy < 35% y DDVI > 57mm, la conclusión es "Miocardiopatía Dilatada con deterioro SEVERO".
+                    
+                    FORMATO:
+                    I. EVALUACIÓN ANATÓMICA
+                    II. FUNCIÓN VENTRICULAR
+                    III. HEMODINÁMIA
+                    IV. CONCLUSIÓN (En negrita)
+                    """
 
-# En tu aplicación Streamlit, asegúrate de configurar esto:
-client = Groq(api_key="TU_API_KEY")
+                    completion = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0
+                    )
 
-# Al llamar a la API:
-# response = client.chat.completions.create(
-#    model="llama-3.3-70b-versatile", # Usa el modelo 70B, es mejor para tablas que el 8B
-#    messages=[{"role": "system", "content": "Eres un cardiólogo que nunca omite datos numéricos."},
-#              {"role": "user", "content": procesar_informe_pastore(texto_pdf)}],
-#    temperature=0 # IMPORTANTE: Temperatura 0 para que no invente ni se rinda
-# )
+                    st.markdown("### Informe Generado")
+                    st.write(completion.choices[0].message.content)
+                    
+                except Exception as e:
+                    st.error(f"Ocurrió un error: {e}")
