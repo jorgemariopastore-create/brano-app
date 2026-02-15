@@ -7,7 +7,6 @@ import io
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 st.title("❤️ Sistema de Informes - Dr. Pastore")
 
-# 1. Recuperar clave de Secrets
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
@@ -15,46 +14,53 @@ if api_key:
 
     if archivo_pdf:
         if st.button("PROCESAR ESTUDIO MÉDICO"):
-            with st.spinner("Analizando tablas técnicas..."):
+            with st.spinner("Extrayendo datos de las tablas del PDF..."):
                 try:
-                    # --- AQUÍ SE CREA LA VARIABLE texto_pdf ---
+                    # 1. Extracción de texto crudo del PDF
                     texto_pdf = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_pdf += pagina.get_text()
 
-                    # --- AHORA QUE texto_pdf EXISTE, DEFINIMOS EL PROMPT ---
-                    prompt_pastore = f"""
-                    ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRANSCRIBIR UN INFORME MÉDICO 
-                    BASADO EN EL TEXTO DEL ECOCARDIOGRAMA ADJUNTO: {texto_pdf}
+                    # 2. Configuración del cliente Groq
+                    client = Groq(api_key=api_key)
 
-                    INSTRUCCIONES DE EXTRACCIÓN (BUSCA EN LAS TABLAS):
-                    - DDVI (LVIDd): mm.
-                    - DSVI (LVIDs): mm.
-                    - AI (DDAI/LA): mm.
-                    - Septum (DDSIV): mm.
-                    - Pared Posterior (DDPP): mm.
-                    - FEy (EF): % (Búscalo también en el texto descriptivo).
+                    # 3. PROMPT "MÁQUINA DE EXTRACCIÓN" (Sin excusas)
+                    prompt_final = f"""
+                    ACTÚA COMO UN TRANSCRIPTOR MÉDICO. NO DES EXPLICACIONES.
+                    TU MISIÓN: Extraer los números de las tablas de este texto:
+                    --- INICIO DEL TEXTO ---
+                    {texto_pdf}
+                    --- FIN DEL TEXTO ---
 
-                    REGLAS DE DIAGNÓSTICO:
-                    - Si FEy < 35% y DDVI > 57mm: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
-                    - Si DDVI > 57mm pero FEy normal: "Dilatación del ventrículo izquierdo".
+                    DATOS OBLIGATORIOS A BUSCAR:
+                    - DDVI: (LVIDd) en mm.
+                    - DSVI: (LVIDs) en mm.
+                    - AI: (DDAI) en mm.
+                    - Septum: (DDSIV) en mm.
+                    - Pared Posterior: (DDPP) en mm.
+                    - FEy: (%)
 
-                    FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE:
-                    I. EVALUACIÓN ANATÓMICA
-                    II. FUNCIÓN VENTRICULAR (Incluir Motilidad y FEy)
-                    III. EVALUACIÓN HEMODINÁMICA
-                    IV. CONCLUSIÓN (En Negrita)
-                    
+                    CRITERIOS MÉDICOS (DR. PASTORE):
+                    1. Si FEy < 35% y DDVI > 57mm -> "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
+                    2. Si Septum o Pared > 11mm -> "Hipertrofia".
+
+                    FORMATO DE SALIDA (ESTRICTO):
+                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
+                    I. EVALUACIÓN ANATÓMICA: [Mencionar todos los mm extraídos]
+                    II. FUNCIÓN VENTRICULAR: [Mencionar FEy % y Motilidad si aparece]
+                    III. EVALUACIÓN HEMODINÁMICA: [Resumen corto]
+                    IV. CONCLUSIÓN: [Diagnóstico en Negrita según criterios]
+
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
 
-                    # 2. Conexión con Groq
-                    client = Groq(api_key=api_key)
                     completion = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": prompt_pastore}],
+                        messages=[
+                            {"role": "system", "content": "Eres un experto en lectura de ecocardiogramas. Tu prioridad es encontrar los valores numéricos dentro de las tablas."},
+                            {"role": "user", "content": prompt_final}
+                        ],
                         temperature=0
                     )
 
@@ -63,5 +69,3 @@ if api_key:
                     
                 except Exception as e:
                     st.error(f"Error técnico: {e}")
-else:
-    st.error("Falta la GROQ_API_KEY en los Secrets de Streamlit.")
