@@ -1,51 +1,67 @@
 
-# Reemplaza la variable 'prompt' en tu código con esta versión mejorada:
+import streamlit as st
+from groq import Groq
+import fitz  # PyMuPDF
+import io
 
-prompt = f"""
-ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRANSCRIBIR UN INFORME MÉDICO 
-BASADO EN EL TEXTO DEL ECOCARDIOGRAMA ADJUNTO: {texto_pdf}
+st.set_page_config(page_title="CardioReport Pro", layout="wide")
+st.title("❤️ Sistema de Informes - Dr. Pastore")
 
-INSTRUCCIONES DE EXTRACCIÓN (BUSCA EN LAS TABLAS):
-1. ANATOMÍA: 
-   - DDVI (LVIDd): Busca el valor en mm.
-   - DSVI (LVIDs): Busca el valor en mm.
-   - AI (DDAI/LA): Busca el valor en mm.
-   - Septum (DDSIV/IVSd): Busca el valor en mm.
-   - Pared Posterior (DDPP/LVPWd): Busca el valor en mm.
+# 1. Recuperar clave de Secrets
+api_key = st.secrets.get("GROQ_API_KEY")
 
-2. FUNCIÓN VENTRICULAR:
-   - FEy (EF): Busca el % (Ej: 31%).
-   - Motilidad: Busca términos como "Hipocinesia", "Aquinesia" o "Normal".
+if api_key:
+    archivo_pdf = st.file_uploader("Cargar PDF del Paciente", type=["pdf"])
 
-3. HEMODINAMIA:
-   - Busca datos de "Vena Cava", "Patrón de llenado" o "Doppler".
+    if archivo_pdf:
+        if st.button("PROCESAR ESTUDIO MÉDICO"):
+            with st.spinner("Analizando tablas técnicas..."):
+                try:
+                    # --- AQUÍ SE CREA LA VARIABLE texto_pdf ---
+                    texto_pdf = ""
+                    with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
+                        for pagina in doc:
+                            texto_pdf += pagina.get_text()
 
-REGLAS DE DIAGNÓSTICO (CRITERIO PASTORE):
-- Si FEy < 35% y DDVI > 57mm: El diagnóstico es "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
-- Si DDVI > 57mm pero FEy es normal: Mencionar "Dilatación del ventrículo izquierdo".
-- Si hay Septum/Pared > 11mm: Mencionar "Signos de hipertrofia".
+                    # --- AHORA QUE texto_pdf EXISTE, DEFINIMOS EL PROMPT ---
+                    prompt_pastore = f"""
+                    ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRANSCRIBIR UN INFORME MÉDICO 
+                    BASADO EN EL TEXTO DEL ECOCARDIOGRAMA ADJUNTO: {texto_pdf}
 
-FORMATO FINAL DE SALIDA:
-DATOS DEL PACIENTE:
-Nombre: 
-ID: 
-Fecha de examen: 
+                    INSTRUCCIONES DE EXTRACCIÓN (BUSCA EN LAS TABLAS):
+                    - DDVI (LVIDd): mm.
+                    - DSVI (LVIDs): mm.
+                    - AI (DDAI/LA): mm.
+                    - Septum (DDSIV): mm.
+                    - Pared Posterior (DDPP): mm.
+                    - FEy (EF): % (Búscalo también en el texto descriptivo).
 
-I. EVALUACIÓN ANATÓMICA:
-- DDVI: [valor] mm / DSVI: [valor] mm
-- Aurícula Izquierda: [valor] mm
-- Septum: [valor] mm / Pared Posterior: [valor] mm
-- Comentarios: [Mencionar si hay dilatación o hipertrofia]
+                    REGLAS DE DIAGNÓSTICO:
+                    - Si FEy < 35% y DDVI > 57mm: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
+                    - Si DDVI > 57mm pero FEy normal: "Dilatación del ventrículo izquierdo".
 
-II. FUNCIÓN VENTRICULAR:
-- Fracción de Eyección (FEy): [valor]%
-- Motilidad: [Detallar hallazgos como Hipocinesia global severa]
+                    FORMATO DE SALIDA:
+                    DATOS DEL PACIENTE:
+                    I. EVALUACIÓN ANATÓMICA
+                    II. FUNCIÓN VENTRICULAR (Incluir Motilidad y FEy)
+                    III. EVALUACIÓN HEMODINÁMICA
+                    IV. CONCLUSIÓN (En Negrita)
+                    
+                    Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                    """
 
-III. EVALUACIÓN HEMODINÁMICA:
-- [Resumir hallazgos de Doppler y Vena Cava]
+                    # 2. Conexión con Groq
+                    client = Groq(api_key=api_key)
+                    completion = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "user", "content": prompt_pastore}],
+                        temperature=0
+                    )
 
-IV. CONCLUSIÓN:
-[Escribir el diagnóstico final en NEGRITA según las REGLAS DE DIAGNÓSTICO]
-
-Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-"""
+                    st.markdown("---")
+                    st.markdown(completion.choices[0].message.content)
+                    
+                except Exception as e:
+                    st.error(f"Error técnico: {e}")
+else:
+    st.error("Falta la GROQ_API_KEY en los Secrets de Streamlit.")
