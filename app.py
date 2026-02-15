@@ -2,85 +2,86 @@
 import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
+import io
 
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
+# Configuración de la App
+st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
-# Clave automática desde Secrets
+st.markdown("""
+    <style>
+    .report-container { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 2px 2px 15px rgba(0,0,0,0.05); }
+    .stButton>button { background-color: #c62828; color: white; border-radius: 10px; font-weight: bold; width: 100%; height: 3em; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("❤️ Sistema de Informes Médicos")
+st.subheader("Dr. Francisco Alberto Pastore")
+
+# 1. Obtener API KEY de los Secrets de Streamlit
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
-    archivo_pdf = st.file_uploader("Cargar PDF del Paciente", type=["pdf"])
+    # 2. Subida del archivo
+    archivo_pdf = st.file_uploader("Subir PDF del Ecocardiograma", type=["pdf"])
 
     if archivo_pdf:
-        if st.button("GENERAR INFORME"):
-            with st.spinner("Extrayendo datos de tablas..."):
+        if st.button("GENERAR INFORME DEL PACIENTE"):
+            with st.spinner("Procesando datos de Manuel Baleiron..."):
                 try:
-                    # 1. Extraer el texto del PDF
-                    texto_pdf = ""
+                    # 3. Leer TODAS las páginas del PDF
+                    texto_completo = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
-                            texto_pdf += pagina.get_text()
+                            texto_completo += pagina.get_text()
 
-                    # 2. Configurar el cliente
+                    # 4. Configurar Groq con el modelo más potente
                     client = Groq(api_key=api_key)
 
-                    # 3. PROMPT DE EXTRACCIÓN FORZADA
-                    # Aquí le damos ejemplos de cómo vienen los datos en el PDF
-                    prompt_instrucciones = f"""
-                    ERES UN ANALISTA TÉCNICO DE ECOCARDIOGRAMAS. 
-                    TU OBJETIVO ES EXTRAER LOS VALORES NUMÉRICOS DEL SIGUIENTE TEXTO CRUDO.
+                    # 5. EL PROMPT REFORZADO (Instrucciones exactas)
+                    prompt_final = f"""
+                    ERES UN ANALISTA MÉDICO EXPERTO. TU TRABAJO ES EXTRAER DATOS DEL SIGUIENTE TEXTO.
+                    EL TEXTO TIENE TABLAS Y PÁRRAFOS. BUSCA EN AMBOS.
 
-                    TEXTO A ANALIZAR:
-                    {texto_pdf}
+                    TEXTO DEL ESTUDIO:
+                    {texto_completo}
 
-                    INSTRUCCIONES CRÍTICAS:
-                    - Busca "DDVI" y toma el número que sigue (ej. 61).
-                    - Busca "DSVI" y toma el número que sigue (ej. 46).
-                    - Busca "FEy" o "Fracción de eyección" (ej. 31%).
-                    - Busca "DDSIV" (Septum) y "DDPP" (Pared).
-                    - Busca "DDAI" (Aurícula).
+                    INSTRUCCIONES DE BÚSQUEDA:
+                    - DDVI: Busca 'DDVI' o 'LVIDd'. (En el texto verás 61).
+                    - DSVI: Busca 'DSVI' o 'LVIDs'. (En el texto verás 46).
+                    - AI: Busca 'DDAI' o 'LA'. (En el texto verás 42).
+                    - SEPTUM: Busca 'DDSIV' o 'IVSd'. (En el texto verás 10).
+                    - PARED: Busca 'DDPP' o 'LVPWd'. (En el texto verás 11).
+                    - FEy: Busca el % o 'Fracción de eyección'. (En el texto verás 31%).
 
-                    APLICA EL CRITERIO DEL DR. PASTORE:
-                    - Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
+                    REGLAS MÉDICAS DEL DR. PASTORE:
+                    1. Si FEy es menor a 35% y DDVI es mayor a 57mm: CONCLUSIÓN = "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
+                    2. Menciona siempre la Motilidad (Ej: Hipocinesia global severa).
 
-                    FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE:
-                    Nombre: MANUEL BALEIRON
-                    ID: 12563493
-                    Fecha: 27/01/2026
-
-                    I. EVALUACIÓN ANATÓMICA:
-                    - DDVI: [valor] mm
-                    - DSVI: [valor] mm
-                    - AI: [valor] mm
-                    - Septum: [valor] mm
-                    - Pared Posterior: [valor] mm
-
-                    II. FUNCIÓN VENTRICULAR:
-                    - FEy: [valor]%
-                    - Motilidad: [hallazgos]
-
-                    III. EVALUACIÓN HEMODINÁMICA:
-                    [Hallazgos de Doppler/Vena Cava]
-
-                    IV. CONCLUSIÓN:
-                    [Diagnóstico en negrita]
+                    FORMATO DE SALIDA (ESTRICTO):
+                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
+                    I. EVALUACIÓN ANATÓMICA: [Menciona DDVI, DSVI, AI, Septum y Pared con sus mm]
+                    II. FUNCIÓN VENTRICULAR: [Menciona FEy % y Motilidad]
+                    III. EVALUACIÓN HEMODINÁMICA: [Resumen corto del Doppler y Vena Cava]
+                    IV. CONCLUSIÓN: [Diagnóstico en Negrita]
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
 
-                    # 4. Llamada a la IA (Usamos temperature 0 para que no invente nada)
+                    # Llamada a la IA
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "No eres un asistente, eres un extractor de datos médicos preciso. No respondas con disculpas, responde solo con el informe completo."},
-                            {"role": "user", "content": prompt_instrucciones}
+                            {"role": "system", "content": "Eres un transcriptor médico preciso. Tu misión es encontrar los números perdidos en el texto y no inventar nada."},
+                            {"role": "user", "content": prompt_final}
                         ],
                         temperature=0
                     )
 
+                    # Mostrar resultado
                     st.markdown("---")
-                    st.markdown(response.choices[0].message.content)
+                    st.markdown(f'<div class="report-container">{response.choices[0].message.content}</div>', unsafe_allow_html=True)
 
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Hubo un error al leer el archivo: {e}")
+else:
+    st.error("⚠️ No se encontró la API Key en los Secrets de Streamlit.")
