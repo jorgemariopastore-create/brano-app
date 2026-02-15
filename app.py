@@ -2,70 +2,85 @@
 import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
-import io
 
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("❤️ Sistema de Informes - Dr. Pastore")
 
+# Clave automática desde Secrets
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
     archivo_pdf = st.file_uploader("Cargar PDF del Paciente", type=["pdf"])
 
     if archivo_pdf:
-        if st.button("PROCESAR ESTUDIO MÉDICO"):
-            with st.spinner("Extrayendo datos de las tablas del PDF..."):
+        if st.button("GENERAR INFORME"):
+            with st.spinner("Extrayendo datos de tablas..."):
                 try:
-                    # 1. Extracción de texto crudo del PDF
+                    # 1. Extraer el texto del PDF
                     texto_pdf = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_pdf += pagina.get_text()
 
-                    # 2. Configuración del cliente Groq
+                    # 2. Configurar el cliente
                     client = Groq(api_key=api_key)
 
-                    # 3. PROMPT "MÁQUINA DE EXTRACCIÓN" (Sin excusas)
-                    prompt_final = f"""
-                    ACTÚA COMO UN TRANSCRIPTOR MÉDICO. NO DES EXPLICACIONES.
-                    TU MISIÓN: Extraer los números de las tablas de este texto:
-                    --- INICIO DEL TEXTO ---
+                    # 3. PROMPT DE EXTRACCIÓN FORZADA
+                    # Aquí le damos ejemplos de cómo vienen los datos en el PDF
+                    prompt_instrucciones = f"""
+                    ERES UN ANALISTA TÉCNICO DE ECOCARDIOGRAMAS. 
+                    TU OBJETIVO ES EXTRAER LOS VALORES NUMÉRICOS DEL SIGUIENTE TEXTO CRUDO.
+
+                    TEXTO A ANALIZAR:
                     {texto_pdf}
-                    --- FIN DEL TEXTO ---
 
-                    DATOS OBLIGATORIOS A BUSCAR:
-                    - DDVI: (LVIDd) en mm.
-                    - DSVI: (LVIDs) en mm.
-                    - AI: (DDAI) en mm.
-                    - Septum: (DDSIV) en mm.
-                    - Pared Posterior: (DDPP) en mm.
-                    - FEy: (%)
+                    INSTRUCCIONES CRÍTICAS:
+                    - Busca "DDVI" y toma el número que sigue (ej. 61).
+                    - Busca "DSVI" y toma el número que sigue (ej. 46).
+                    - Busca "FEy" o "Fracción de eyección" (ej. 31%).
+                    - Busca "DDSIV" (Septum) y "DDPP" (Pared).
+                    - Busca "DDAI" (Aurícula).
 
-                    CRITERIOS MÉDICOS (DR. PASTORE):
-                    1. Si FEy < 35% y DDVI > 57mm -> "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
-                    2. Si Septum o Pared > 11mm -> "Hipertrofia".
+                    APLICA EL CRITERIO DEL DR. PASTORE:
+                    - Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
 
-                    FORMATO DE SALIDA (ESTRICTO):
-                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
-                    I. EVALUACIÓN ANATÓMICA: [Mencionar todos los mm extraídos]
-                    II. FUNCIÓN VENTRICULAR: [Mencionar FEy % y Motilidad si aparece]
-                    III. EVALUACIÓN HEMODINÁMICA: [Resumen corto]
-                    IV. CONCLUSIÓN: [Diagnóstico en Negrita según criterios]
+                    FORMATO DE SALIDA:
+                    DATOS DEL PACIENTE:
+                    Nombre: MANUEL BALEIRON
+                    ID: 12563493
+                    Fecha: 27/01/2026
+
+                    I. EVALUACIÓN ANATÓMICA:
+                    - DDVI: [valor] mm
+                    - DSVI: [valor] mm
+                    - AI: [valor] mm
+                    - Septum: [valor] mm
+                    - Pared Posterior: [valor] mm
+
+                    II. FUNCIÓN VENTRICULAR:
+                    - FEy: [valor]%
+                    - Motilidad: [hallazgos]
+
+                    III. EVALUACIÓN HEMODINÁMICA:
+                    [Hallazgos de Doppler/Vena Cava]
+
+                    IV. CONCLUSIÓN:
+                    [Diagnóstico en negrita]
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
 
-                    completion = client.chat.completions.create(
+                    # 4. Llamada a la IA (Usamos temperature 0 para que no invente nada)
+                    response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Eres un experto en lectura de ecocardiogramas. Tu prioridad es encontrar los valores numéricos dentro de las tablas."},
-                            {"role": "user", "content": prompt_final}
+                            {"role": "system", "content": "No eres un asistente, eres un extractor de datos médicos preciso. No respondas con disculpas, responde solo con el informe completo."},
+                            {"role": "user", "content": prompt_instrucciones}
                         ],
                         temperature=0
                     )
 
                     st.markdown("---")
-                    st.markdown(completion.choices[0].message.content)
-                    
+                    st.markdown(response.choices[0].message.content)
+
                 except Exception as e:
-                    st.error(f"Error técnico: {e}")
+                    st.error(f"Error: {e}")
