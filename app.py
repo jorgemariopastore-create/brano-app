@@ -4,94 +4,87 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 from docx import Document
-from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+# ... (mantén tus importaciones de docx)
 
+# Configuración y Estilos
 st.set_page_config(page_title="CardioReport AI Pro", layout="wide")
 
-# Estilo visual
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { background-color: #d32f2f; color: white; font-weight: bold; border-radius: 8px; }
-    .report-box { background-color: white; padding: 20px; border: 1px solid #d1d1d1; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("❤️ Sistema de Informes Dr. Pastore - v4.0")
-st.info("Esta versión fuerza la extracción de datos de tablas técnicas (Caso Baleiron corregido).")
+# ... (mantén tu estilo CSS)
 
 api_key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("Groq API Key:", type="password")
 
-def crear_word(texto):
-    doc = Document()
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
-    run.bold = True
-    run.font.size = Pt(14)
-    for linea in texto.split('\n'):
-        linea = linea.replace('**', '').strip()
-        if not linea: continue
-        parrafo = doc.add_paragraph()
-        run_l = parrafo.add_run(linea)
-        if any(linea.startswith(x) for x in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"]):
-            run_l.bold = True
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    return buffer.getvalue()
-
 if api_key:
     client = Groq(api_key=api_key.strip())
-    archivo_subido = st.file_uploader("Cargar PDF del Estudio", type=["pdf"])
+    archivo = st.file_uploader("Cargar PDF de Manuel Baleiron u otro paciente", type=["pdf"])
 
-    if archivo_subido and st.button("PROCESAR ESTUDIO MÉDICO"):
-        with st.spinner("Analizando datos..."):
-            texto_extraido = ""
-            with fitz.open(stream=archivo_subido.read(), filetype="pdf") as doc:
+    if archivo and st.button("GENERAR INFORME MÉDICO"):
+        with st.spinner("EXTRAYENDO DATOS DE TABLAS TÉCNICAS..."):
+            # 1. Extracción de texto
+            texto_pdf = ""
+            with fitz.open(stream=archivo.read(), filetype="pdf") as doc:
                 for pagina in doc:
-                    texto_extraido += pagina.get_text()
+                    texto_pdf += pagina.get_text()
 
-            # PROMPT REFORZADO PARA EVITAR EL "NO DISPONIBLE"
-            prompt = f"""
-            Eres el Dr. Francisco Alberto Pastore. Debes generar un informe basado en el texto adjunto. 
-            IMPORTANTE: Los datos están presentes en tablas. No ignores los números.
+            # 2. EL PROMPT DEFINITIVO (Lógica Anti-Bloqueo)
+            prompt_maestro = f"""
+            ERES UN EXPERTO EN EXTRACCIÓN DE DATOS DE ECOCARDIOGRAMAS.
+            TU OBJETIVO: Generar el informe del Dr. Pastore. No puedes decir "No disponible".
             
-            TEXTO CRUDO:
-            {texto_extraido}
+            TEXTO PARA ANALIZAR:
+            {texto_pdf}
 
-            INSTRUCCIONES DE EXTRACCIÓN:
-            - DDVI: Búscalo como 'DDVI' o 'LVIDd'. Si está en cm (6.1), conviértelo a mm (61 mm).
-            - DSVI: Búscalo como 'DSVI' o 'LVIDs'.
-            - FEy: Búscalo como 'FEy', 'EF', 'Simpson' o 'Teich'.
-            - AI: Búscalo como 'AI', 'Aurícula Izq' o 'LA'.
-            
-            CRITERIOS MÉDICOS OBLIGATORIOS:
-            - Si FEy < 35% y DDVI > 57 mm (como en el caso de Baleiron): La CONCLUSIÓN debe ser "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
-            - No uses la frase "No disponible" si ves números en el texto. Haz tu mejor esfuerzo médico por transcribir lo que ves.
+            PASO 1: LOCALIZA ESTOS VALORES EN LAS TABLAS (Mapeo de sinónimos):
+            - DDVI = Busca 'DDVI', 'LVIDd', 'Diastolic' o 'Diast'. (Ej: 61 mm o 6.1 cm)
+            - DSVI = Busca 'DSVI', 'LVIDs', 'Systolic' o 'Syst'. (Ej: 46 mm o 4.6 cm)
+            - FEy = Busca 'FEy', 'EF', 'Fracción de eyección' o 'Simpson'. (Ej: 31%)
+            - AI = Busca 'AI', 'Aurícula Izq', 'DDAI' o 'LA'. (Ej: 42 mm)
+            - SEPTUM = Busca 'DDSIV', 'IVSd' o 'Tabique'. (Ej: 10 mm)
 
-            ESTRUCTURA:
+            PASO 2: APLICA LA LÓGICA DE DIAGNÓSTICO (OBLIGATORIO):
+            - REGLA A: Si FEy es <= 35%, escribe "Deterioro SEVERO de la función sistólica".
+            - REGLA B: Si DDVI es > 57mm, escribe "DILATACIÓN del ventrículo izquierdo".
+            - REGLA C: Si hay ambas, usa "Miocardiopatía Dilatada".
+            - REGLA D: Si FEy está entre 31-35% e hipocinesia global, es SEVERO.
+
+            PASO 3: FORMATO DE SALIDA (ESTRICTO):
             DATOS DEL PACIENTE:
-            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, AI, Septum, Pared)
-            II. FUNCIÓN VENTRICULAR: (FEy y motilidad)
-            III. EVALUACIÓN HEMODINÁMICA: (Valvular y Doppler)
-            IV. CONCLUSIÓN: (Diagnóstico final en negrita)
+            Nombre: 
+            ID: 
+            Fecha: 
+
+            I. EVALUACIÓN ANATÓMICA:
+            - DDVI: [Valor] mm
+            - DSVI: [Valor] mm
+            - AI: [Valor] mm
+            - Septum: [Valor] mm
+            - Pared: [Valor] mm
+
+            II. FUNCIÓN VENTRICULAR:
+            - FEy: [Valor]%
+            - Motilidad: [Describir si hay hipocinesia]
+
+            III. EVALUACIÓN HEMODINÁMICA:
+            [Resumen del Doppler y válvulas]
+
+            IV. CONCLUSIÓN:
+            [Tu diagnóstico basado en las REGLAS A, B y C en NEGRITA]
 
             Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             """
 
             try:
-                response = client.chat.completions.create(
+                # Usamos el modelo más potente (70b) para que no ignore las tablas
+                chat = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[
-                        {"role": "system", "content": "Eres un cardiólogo experto. Tu prioridad es extraer valores numéricos de los informes técnicos."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": "No eres un chat, eres un transcriptor médico. Si ves números en una tabla, úsalos. Prohibido omitir datos."},
+                        {"role": "user", "content": prompt_maestro}
                     ],
-                    temperature=0 # Temperatura 0 para evitar que invente o se rinda
+                    temperature=0
                 )
                 
-                resultado = response.choices[0].message.content
-                st.markdown(f'<div class="report-box">{resultado}</div>', unsafe_allow_html=True)
-                st.download_button("📥 Descargar Word", crear_word(resultado), f"Informe_{archivo_subido.name}.docx")
+                informe = chat.choices[0].message.content
+                st.markdown(f"### Informe Generado\n\n{informe}")
+                # ... (resto del código para descargar Word)
             except Exception as e:
                 st.error(f"Error: {e}")
