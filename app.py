@@ -1,73 +1,51 @@
 
-import streamlit as st
-from groq import Groq
-import fitz  # PyMuPDF
-import io
+# Reemplaza la variable 'prompt' en tu código con esta versión mejorada:
 
-# 1. CONFIGURACIÓN DE PÁGINA
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
+prompt = f"""
+ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRANSCRIBIR UN INFORME MÉDICO 
+BASADO EN EL TEXTO DEL ECOCARDIOGRAMA ADJUNTO: {texto_pdf}
 
-st.title("❤️ Sistema de Informes - Dr. Pastore")
+INSTRUCCIONES DE EXTRACCIÓN (BUSCA EN LAS TABLAS):
+1. ANATOMÍA: 
+   - DDVI (LVIDd): Busca el valor en mm.
+   - DSVI (LVIDs): Busca el valor en mm.
+   - AI (DDAI/LA): Busca el valor en mm.
+   - Septum (DDSIV/IVSd): Busca el valor en mm.
+   - Pared Posterior (DDPP/LVPWd): Busca el valor en mm.
 
-# 2. LÓGICA DE CLAVE AUTOMÁTICA
-# Intenta sacar la clave de los secretos del sistema
-api_key = st.secrets.get("GROQ_API_KEY")
+2. FUNCIÓN VENTRICULAR:
+   - FEy (EF): Busca el % (Ej: 31%).
+   - Motilidad: Busca términos como "Hipocinesia", "Aquinesia" o "Normal".
 
-if not api_key:
-    # Si por alguna razón no está, la pide solo como respaldo
-    api_key = st.sidebar.text_input("Introduce tu Groq API Key:", type="password")
+3. HEMODINAMIA:
+   - Busca datos de "Vena Cava", "Patrón de llenado" o "Doppler".
 
-if api_key:
-    # 3. CARGADOR DE ARCHIVOS (Aparecerá directo si la clave funciona)
-    archivo_pdf = st.file_uploader("Cargar PDF del Paciente", type=["pdf"])
+REGLAS DE DIAGNÓSTICO (CRITERIO PASTORE):
+- Si FEy < 35% y DDVI > 57mm: El diagnóstico es "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica".
+- Si DDVI > 57mm pero FEy es normal: Mencionar "Dilatación del ventrículo izquierdo".
+- Si hay Septum/Pared > 11mm: Mencionar "Signos de hipertrofia".
 
-    if archivo_pdf:
-        st.success(f"Estudio de {archivo_pdf.name} listo para procesar.")
-        
-        if st.button("PROCESAR ESTUDIO MÉDICO"):
-            with st.spinner("Buscando datos en tablas..."):
-                try:
-                    # Leer PDF
-                    texto_pdf = ""
-                    with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
-                        for pagina in doc:
-                            texto_pdf += pagina.get_text()
+FORMATO FINAL DE SALIDA:
+DATOS DEL PACIENTE:
+Nombre: 
+ID: 
+Fecha de examen: 
 
-                    # Configurar Cliente
-                    client = Groq(api_key=api_key)
-                    
-                    # PROMPT REFORZADO PARA EL CASO BALEIRON
-                    prompt = f"""
-                    ERES EL DR. FRANCISCO PASTORE. TRANSCRIPCIÓN MÉDICA OBLIGATORIA.
-                    Extrae estos datos del texto: {texto_pdf}
-                    
-                    INSTRUCCIONES DE EXTRACCIÓN:
-                    - DDVI: Busca 'DDVI' o 'LVIDd'. En Baleiron es 61 mm.
-                    - FEy: Busca 'FEy', 'EF' o 'Fracción de Eyección'. En Baleiron es 31%.
-                    - AI: Busca 'DDAI' o 'LA'. En Baleiron es 42 mm.
-                    
-                    REGLA MÉDICA: Si FEy < 35% y DDVI > 57mm, la conclusión DEBE SER "Miocardiopatía Dilatada con deterioro SEVERO".
-                    
-                    FORMATO FINAL:
-                    DATOS DEL PACIENTE:
-                    I. EVALUACIÓN ANATÓMICA
-                    II. FUNCIÓN VENTRICULAR
-                    III. HEMODINÁMIA
-                    IV. CONCLUSIÓN (En negrita y destacada)
-                    
-                    Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-                    """
+I. EVALUACIÓN ANATÓMICA:
+- DDVI: [valor] mm / DSVI: [valor] mm
+- Aurícula Izquierda: [valor] mm
+- Septum: [valor] mm / Pared Posterior: [valor] mm
+- Comentarios: [Mencionar si hay dilatación o hipertrofia]
 
-                    completion = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0
-                    )
+II. FUNCIÓN VENTRICULAR:
+- Fracción de Eyección (FEy): [valor]%
+- Motilidad: [Detallar hallazgos como Hipocinesia global severa]
 
-                    st.markdown("---")
-                    st.markdown(completion.choices[0].message.content)
-                    
-                except Exception as e:
-                    st.error(f"Error al procesar: {e}")
-else:
-    st.error("No se encontró la API KEY. Configúrala en el archivo secrets.toml")
+III. EVALUACIÓN HEMODINÁMICA:
+- [Resumir hallazgos de Doppler y Vena Cava]
+
+IV. CONCLUSIÓN:
+[Escribir el diagnóstico final en NEGRITA según las REGLAS DE DIAGNÓSTICO]
+
+Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+"""
