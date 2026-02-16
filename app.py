@@ -21,7 +21,7 @@ st.markdown("""
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-# 2. FUNCIÓN PARA EL DOCUMENTO WORD (Formato Profesional)
+# 2. FUNCIÓN PARA EL DOCUMENTO WORD
 def crear_word_profesional(texto):
     doc = Document()
     titulo = doc.add_paragraph()
@@ -38,7 +38,7 @@ def crear_word_profesional(texto):
             run = p.add_run(linea_limpia)
             run.font.name = 'Arial'
             run.font.size = Pt(11)
-            # Detectar encabezados para poner en negrita
+            # Resaltar encabezados de sección en negrita
             if any(linea_limpia.upper().startswith(tag) for tag in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA:"]):
                 run.bold = True
     
@@ -56,6 +56,67 @@ if api_key:
         if st.button("GENERAR INFORME PROFESIONAL"):
             with st.spinner("Analizando estudio y redactando informe..."):
                 try:
-                    # Lectura de TODAS las páginas
+                    # Lectura de TODAS las páginas del PDF
                     texto_completo = ""
-                    with fitz.open(stream=archivo_pdf.read(), filetype="pdf")
+                    # CORRECCIÓN: Se añadió el ':' al final de la línea del 'with'
+                    with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
+                        for pagina in doc:
+                            texto_completo += pagina.get_text()
+                    
+                    # Limpieza para que la IA no se confunda con caracteres de tablas
+                    texto_limpio = texto_completo.replace('"', ' ').replace("'", " ").replace(",", " ")
+                    texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
+
+                    client = Groq(api_key=api_key)
+
+                    # PROMPT UNIVERSAL (Válido para cualquier paciente)
+                    prompt_universal = f"""
+                    ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES REDACTAR UN INFORME MÉDICO PROFESIONAL.
+                    
+                    TEXTO DEL ESTUDIO A ANALIZAR: 
+                    {texto_limpio}
+
+                    INSTRUCCIONES DE EXTRACCIÓN:
+                    1. DATOS: Identifica Nombre, ID y Fecha de estudio.
+                    2. SECCIÓN I: Busca diámetros de VI (DDVI/LVIDd, DSVI/LVIDs), Aurícula (AI/DDAI), Septum (DDSIV) y Pared (DDPP).
+                    3. SECCIÓN II: Busca la FEy (%) y describe la motilidad (busca palabras como Hipocinesia, Aquinesia, Disquinesia o Normal).
+                    4. SECCIÓN III: Busca datos de Vena Cava y hallazgos del Doppler (E/A, E/e, presiones).
+                    5. SECCIÓN IV (CONCLUSIÓN): 
+                       - REGLA: Si FEy < 35% y DDVI > 57mm -> "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
+                       - Si no cumple, redacta una conclusión profesional basada en los hallazgos técnicos.
+
+                    FORMATO DE SALIDA (ESTRICTO):
+                    DATOS DEL PACIENTE:
+                    I. EVALUACIÓN ANATÓMICA:
+                    II. FUNCIÓN VENTRICULAR:
+                    III. EVALUACIÓN HEMODINÁMICA:
+                    IV. CONCLUSIÓN: (En negrita)
+
+                    Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                    """
+
+                    response = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "Eres un transcriptor médico experto. Extrae los valores numéricos con precisión ignorando ruidos de formato."},
+                            {"role": "user", "content": prompt_universal}
+                        ],
+                        temperature=0
+                    )
+
+                    informe_final = response.choices[0].message.content
+                    
+                    st.markdown("---")
+                    st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
+                    
+                    st.download_button(
+                        label="📥 Descargar Informe en Word",
+                        data=crear_word_profesional(informe_final),
+                        file_name=f"Informe_{archivo_pdf.name.replace('.pdf', '')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+
+                except Exception as e:
+                    st.error(f"Error al procesar el archivo: {e}")
+else:
+    st.error("⚠️ No se encontró la API KEY en los Secrets de Streamlit.")
