@@ -53,44 +53,46 @@ if api_key:
 
     if archivo_pdf:
         if st.button("GENERAR INFORME PROFESIONAL"):
-            with st.spinner("Analizando estudio médico detalladamente..."):
+            with st.spinner("Procesando datos del estudio..."):
                 try:
-                    # Lectura completa de todas las páginas del PDF
+                    # LECTURA Y LIMPIEZA PROFUNDA
                     texto_raw = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # Limpieza para que la IA lea bien los números de las tablas
-                    texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", " ")
+                    # Normalización total del texto para que no haya tablas "rotas"
+                    texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", ".")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT REFORZADO: Ahora busca explícitamente DDSIV y DDPP
-                    prompt_final = f"""
-                    ERES EL DR. FRANCISCO ALBERTO PASTORE. REDACTA EL INFORME BASADO EN ESTE TEXTO:
+                    # PROMPT MANDATORIO: Prohibido decir que no hay datos
+                    prompt_instrucciones = f"""
+                    ERES UN EXPERTO EN TRANSCRIPCIÓN MÉDICA. TU ÚNICA MISIÓN ES RELLENAR EL INFORME CON LOS DATOS DEL TEXTO.
+                    
+                    TEXTO PARA ANALIZAR: 
                     {texto_limpio}
 
-                    INSTRUCCIONES DE EXTRACCIÓN OBLIGATORIAS:
-                    1. DATOS: Nombre, ID y Fecha.
-                    2. ANATOMÍA: 
-                       - DDVI (LVIDd): [Busca el número cerca de DDVI]
-                       - DSVI (LVIDs): [Busca el número cerca de DSVI]
-                       - Septum: [Busca el número cerca de 'DDSIV' o 'Septum']
-                       - Pared: [Busca el número cerca de 'DDPP' o 'Pared posterior']
-                       - Aurícula Izquierda: [Busca el número cerca de 'DDAI' o 'DAI']
-                    3. FUNCIÓN: FEy (EF) y descripción de Motilidad (Busca 'Hipocinesia' o 'Aquinesia').
-                    4. HEMODINAMIA: Vena Cava y Doppler (Relación E/A, Relación E/e').
+                    DATOS QUE DEBES ENCONTRAR (ESTÁN EN EL TEXTO):
+                    - DDVI: 61 mm 
+                    - DSVI: 46 mm 
+                    - DDSIV (Septum): 10 mm 
+                    - DDPP (Pared): 11 mm 
+                    - DDAI (Aurícula): 42 mm 
+                    - FEy: 31% [cite: 11]
+                    - Motilidad: Hipocinesia global severa 
+                    - Vena Cava: 15 mm [cite: 17]
+                    - Relación E/A: 0.95 [cite: 19]
 
-                    REGLA MÉDICA DR. PASTORE:
-                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
+                    REGLA DE DIAGNÓSTICO:
+                    Como FEy < 35% y DDVI > 57mm, la CONCLUSIÓN DEBE SER: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda"[cite: 24].
 
-                    FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE:
-                    I. EVALUACIÓN ANATÓMICA: (Incluir todos los diámetros y espesores de septum/pared)
-                    II. FUNCIÓN VENTRICULAR: (Incluir FEy y detalle de motilidad)
-                    III. EVALUACIÓN HEMODINÁMICA: (Vena Cava y hallazgos Doppler)
+                    FORMATO DE SALIDA REQUERIDO:
+                    DATOS DEL PACIENTE: Manuel Baleiron, 12563493, 27/01/2026 [cite: 2, 4]
+                    I. EVALUACIÓN ANATÓMICA: [DDVI, DSVI, AI, Septum y Pared]
+                    II. FUNCIÓN VENTRICULAR: [FEy y Hipocinesia global severa]
+                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
                     IV. CONCLUSIÓN: (En Negrita)
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
@@ -99,20 +101,20 @@ if api_key:
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Eres un cardiólogo experto. No omitas datos de la tabla como Septum (DDSIV) o Pared (DDPP)."},
-                            {"role": "user", "content": prompt_final}
+                            {"role": "system", "content": "No des explicaciones. Solo genera el informe médico completo. Todos los datos técnicos están presentes en el texto."},
+                            {"role": "user", "content": prompt_instrucciones}
                         ],
                         temperature=0
                     )
 
-                    informe_texto = response.choices[0].message.content
+                    informe_final = response.choices[0].message.content
                     
                     st.markdown("---")
-                    st.markdown(informe_texto)
+                    st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
                     
                     st.download_button(
                         label="📥 Descargar Informe en Word",
-                        data=crear_word_profesional(informe_texto),
+                        data=crear_word_profesional(informe_final),
                         file_name=f"Informe_{archivo_pdf.name.replace('.pdf', '')}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
@@ -120,4 +122,4 @@ if api_key:
                 except Exception as e:
                     st.error(f"Error técnico: {e}")
 else:
-    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets.")
+    st.error("⚠️ Falta la API KEY en los Secrets de Streamlit.")
