@@ -11,13 +11,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
-st.markdown("""
-    <style>
-    .report-container { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 2px 2px 15px rgba(0,0,0,0.05); }
-    .stButton>button { background-color: #c62828; color: white; border-radius: 10px; font-weight: bold; width: 100%; height: 3em; }
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
@@ -38,7 +31,6 @@ def crear_word_profesional(texto):
             run = p.add_run(linea_limpia)
             run.font.name = 'Arial'
             run.font.size = Pt(11)
-            # Resaltar encabezados de sección en negrita
             if any(linea_limpia.upper().startswith(tag) for tag in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA:"]):
                 run.bold = True
     
@@ -54,43 +46,43 @@ if api_key:
 
     if archivo_pdf:
         if st.button("GENERAR INFORME PROFESIONAL"):
-            with st.spinner("Analizando estudio y redactando informe..."):
+            with st.spinner("Analizando estudio médico detalladamente..."):
                 try:
-                    # Lectura de TODAS las páginas del PDF
-                    texto_completo = ""
-                    # CORRECCIÓN: Se añadió el ':' al final de la línea del 'with'
+                    # Lectura completa de todas las páginas del PDF
+                    texto_raw = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
-                            texto_completo += pagina.get_text()
+                            texto_raw += pagina.get_text()
                     
-                    # Limpieza para que la IA no se confunda con caracteres de tablas
-                    texto_limpio = texto_completo.replace('"', ' ').replace("'", " ").replace(",", " ")
+                    # LIMPIEZA EXTREMA: Une números con sus etiquetas para evitar que la IA se pierda
+                    texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", " ")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT UNIVERSAL (Válido para cualquier paciente)
-                    prompt_universal = f"""
-                    ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES REDACTAR UN INFORME MÉDICO PROFESIONAL.
-                    
-                    TEXTO DEL ESTUDIO A ANALIZAR: 
+                    # PROMPT UNIVERSAL ROBUSTO
+                    prompt_final = f"""
+                    ERES EL DR. FRANCISCO ALBERTO PASTORE. DEBES REDACTAR EL INFORME BASADO EN ESTE TEXTO:
                     {texto_limpio}
 
-                    INSTRUCCIONES DE EXTRACCIÓN:
-                    1. DATOS: Identifica Nombre, ID y Fecha de estudio.
-                    2. SECCIÓN I: Busca diámetros de VI (DDVI/LVIDd, DSVI/LVIDs), Aurícula (AI/DDAI), Septum (DDSIV) y Pared (DDPP).
-                    3. SECCIÓN II: Busca la FEy (%) y describe la motilidad (busca palabras como Hipocinesia, Aquinesia, Disquinesia o Normal).
-                    4. SECCIÓN III: Busca datos de Vena Cava y hallazgos del Doppler (E/A, E/e, presiones).
-                    5. SECCIÓN IV (CONCLUSIÓN): 
-                       - REGLA: Si FEy < 35% y DDVI > 57mm -> "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
-                       - Si no cumple, redacta una conclusión profesional basada en los hallazgos técnicos.
+                    INSTRUCCIONES DE EXTRACCIÓN (BUSCA ESTOS PATRONES):
+                    - DDVI: Busca 'DDVI' o 'LVIDd'. (En este caso es 61).
+                    - DSVI: Busca 'DSVI' o 'LVIDs'. (En este caso es 46).
+                    - FEy: Busca 'FEy', 'EF' o 'Fracción de eyección'. (En este caso es 31%).
+                    - AI: Busca 'Aurícula', 'DAI' o 'DDAI'. (En este caso es 42).
+                    - Septum/Pared: Busca 'DDSIV' (10) y 'DDPP' (11).
+                    - Motilidad: Busca 'Hipocinesia' o 'Aquinesia'.
+                    - Hemodinamia: Busca 'Vena Cava' (15) y 'Relación E/A' (0.95).
 
-                    FORMATO DE SALIDA (ESTRICTO):
-                    DATOS DEL PACIENTE:
-                    I. EVALUACIÓN ANATÓMICA:
-                    II. FUNCIÓN VENTRICULAR:
-                    III. EVALUACIÓN HEMODINÁMICA:
-                    IV. CONCLUSIÓN: (En negrita)
+                    REGLA DE DIAGNÓSTICO:
+                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
+
+                    FORMATO DE SALIDA:
+                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
+                    I. EVALUACIÓN ANATÓMICA: [Mencionar diámetros y espesores encontrados]
+                    II. FUNCIÓN VENTRICULAR: [Mencionar FEy% y Motilidad]
+                    III. EVALUACIÓN HEMODINÁMICA: [Mencionar Vena Cava y Doppler]
+                    IV. CONCLUSIÓN: [Diagnóstico en Negrita]
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
@@ -98,25 +90,25 @@ if api_key:
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Eres un transcriptor médico experto. Extrae los valores numéricos con precisión ignorando ruidos de formato."},
-                            {"role": "user", "content": prompt_universal}
+                            {"role": "system", "content": "Eres un transcriptor médico preciso. Los datos siempre están en el texto, búscalos con atención."},
+                            {"role": "user", "content": prompt_final}
                         ],
                         temperature=0
                     )
 
-                    informe_final = response.choices[0].message.content
+                    informe_texto = response.choices[0].message.content
                     
                     st.markdown("---")
-                    st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
+                    st.markdown(informe_texto)
                     
                     st.download_button(
                         label="📥 Descargar Informe en Word",
-                        data=crear_word_profesional(informe_final),
+                        data=crear_word_profesional(informe_texto),
                         file_name=f"Informe_{archivo_pdf.name.replace('.pdf', '')}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
 
                 except Exception as e:
-                    st.error(f"Error al procesar el archivo: {e}")
+                    st.error(f"Error técnico: {e}")
 else:
-    st.error("⚠️ No se encontró la API KEY en los Secrets de Streamlit.")
+    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets de Streamlit.")
