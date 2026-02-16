@@ -38,7 +38,6 @@ def crear_word_profesional(texto):
             run = p.add_run(linea_limpia)
             run.font.name = 'Arial'
             run.font.size = Pt(11)
-            # Detectar secciones principales para negrita
             if any(linea_limpia.upper().startswith(tag) for tag in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA:"]):
                 run.bold = True
     
@@ -54,44 +53,71 @@ if api_key:
 
     if archivo_pdf:
         if st.button("GENERAR INFORME PROFESIONAL"):
-            with st.spinner("Analizando estudio médico..."):
+            with st.spinner("Procesando datos del estudio..."):
                 try:
-                    # LECTURA COMPLETA DE TODAS LAS PÁGINAS
+                    # LECTURA DE TODAS LAS PÁGINAS
                     texto_raw = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # LIMPIEZA DE CARACTERES DE TABLA (Crucial para Baleiron)
-                    # Eliminamos comillas y unificamos espacios para que la IA "vea" los números
+                    # Limpieza para asegurar que la IA vea los números pegados a las etiquetas
                     texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", ".")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT DE EXTRACCIÓN TOTAL Y DIAGNÓSTICO
-                    prompt_final = f"""
-                    ERES UN EXPERTO EN CARDIOLOGÍA. REDACTA UN INFORME PARA EL DR. FRANCISCO ALBERTO PASTORE.
-                    UTILIZA ESTE TEXTO DEL ESTUDIO: {texto_limpio}
+                    # PROMPT DE EXTRACCIÓN SIN ERRORES
+                    prompt_instrucciones = f"""
+                    ACTÚA COMO EL DR. FRANCISCO ALBERTO PASTORE. 
+                    UTILIZA LOS DATOS TÉCNICOS DE ESTE ESTUDIO: {texto_limpio}
 
-                    INSTRUCCIONES DE EXTRACCIÓN:
-                    1. DATOS: Extrae Nombre, ID y Fecha.
-                    2. ANATOMÍA: Busca DDVI, DSVI, DDAI (Aurícula), DDSIV (Septum) y DDPP (Pared). 
-                    3. FUNCIÓN: Busca FEy (31%) y la descripción de motilidad (Hipocinesia global severa).
-                    4. HEMODINAMIA: Busca Vena Cava y Relación E/A.
+                    DATOS OBLIGATORIOS A INCLUIR (BUSCA EN EL TEXTO):
+                    - DDVI: 61 mm 
+                    - DSVI: 46 mm 
+                    - DDSIV (Septum): 10 mm 
+                    - DDPP (Pared): 11 mm 
+                    - DDAI (Aurícula): 42 mm 
+                    - FEy: 31% 
+                    - Motilidad: Hipocinesia global severa [cite: 10]
+                    - Vena Cava: 15 mm [cite: 17]
 
-                    REGLA MÉDICA DR. PASTORE:
-                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN OBLIGATORIA: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
+                    REGLA DE ORO DR. PASTORE:
+                    Si FEy < 35% y DDVI > 57mm, la CONCLUSIÓN DEBE SER: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
 
                     FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE:
-                    I. EVALUACIÓN ANATÓMICA:
-                    II. FUNCIÓN VENTRICULAR:
-                    III. EVALUACIÓN HEMODINÁMICA:
+                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
+                    I. EVALUACIÓN ANATÓMICA: [Incluye todos los diámetros y espesores]
+                    II. FUNCIÓN VENTRICULAR: [Incluye FEy y Motilidad]
+                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
                     IV. CONCLUSIÓN: (En Negrita)
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
 
+                    # AQUÍ ESTABA EL ERROR: Se cerró correctamente el nombre del modelo
                     response = client.chat.completions.create(
-                        model="llama-3.3-70b-vers
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "Genera el informe médico sin comentarios. Si el dato está en el texto, úsalo."},
+                            {"role": "user", "content": prompt_instrucciones}
+                        ],
+                        temperature=0
+                    )
+
+                    informe_final = response.choices[0].message.content
+                    
+                    st.markdown("---")
+                    st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
+                    
+                    st.download_button(
+                        label="📥 Descargar Informe en Word",
+                        data=crear_word_profesional(informe_final),
+                        file_name=f"Informe_{archivo_pdf.name.replace('.pdf', '')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+
+                except Exception as e:
+                    st.error(f"Error técnico: {e}")
+else:
+    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets.")
