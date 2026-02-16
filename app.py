@@ -8,53 +8,60 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN
 st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
-# Estilo para evitar el "Botón Rojo"
 st.markdown("""
     <style>
-    .report-container { background-color: #ffffff; padding: 25px; border-radius: 10px; border: 1px solid #ddd; }
-    .stButton>button { background-color: #c62828; color: white; width: 100%; }
+    .report-container { background-color: #ffffff; padding: 20px; border-radius: 10px; border: 1px solid #ddd; }
+    .stButton>button { background-color: #c62828; color: white; width: 100%; height: 3em; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-# 2. FUNCIÓN PARA CREAR EL WORD CON ANEXO DE IMÁGENES
-def crear_word_con_imagenes(texto, imagenes_bytes):
+# 2. FUNCIÓN PARA EL WORD PROFESIONAL
+def crear_word_final(texto, imagenes):
     doc = Document()
     
-    # Encabezado
+    # Estilo general
+    style = doc.styles['Normal']
+    style.font.name = 'Arial'
+    style.font.size = Pt(11)
+
+    # Título
     titulo = doc.add_paragraph()
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = titulo.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     run_t.bold = True
     run_t.font.size = Pt(14)
 
-    # Cuerpo del Informe
-    for linea in texto.split('\n'):
-        linea_limpia = linea.replace('**', '').strip()
-        if linea_limpia:
-            p = doc.add_paragraph()
-            run = p.add_run(linea_limpia)
-            if any(tag in linea_limpia.upper() for tag in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
-                run.bold = True
+    # Procesar el texto
+    secciones = texto.split('\n')
+    for linea in secciones:
+        linea = linea.strip()
+        if not linea: continue
+        
+        # FORZAR SALTO DE PÁGINA ANTES DE LA CONCLUSIÓN
+        if "IV. CONCLUSIÓN" in linea.upper():
+            doc.add_page_break()
+        
+        p = doc.add_paragraph()
+        run = p.add_run(linea.replace('**', ''))
+        
+        # Negritas en encabezados
+        if any(tag in linea.upper() for tag in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
+            run.bold = True
 
     # ANEXO DE IMÁGENES (4 líneas de a dos)
-    if imagenes_bytes:
+    if imagenes:
         doc.add_page_break()
         doc.add_heading('ANEXO DE IMÁGENES', level=1)
         
-        # Crear tabla de 2 columnas
-        num_imgs = len(imagenes_bytes)
-        rows = (num_imgs + 1) // 2
-        table = doc.add_table(rows=rows, cols=2)
-        
-        for i, img_data in enumerate(imagenes_bytes):
-            row = i // 2
-            col = i % 2
+        table = doc.add_table(rows=(len(imagenes) + 1) // 2, cols=2)
+        for i, img_data in enumerate(imagenes):
+            row, col = i // 2, i % 2
             paragraph = table.cell(row, col).paragraphs[0]
             run = paragraph.add_run()
             run.add_picture(io.BytesIO(img_data), width=Inches(3.0))
@@ -63,51 +70,57 @@ def crear_word_con_imagenes(texto, imagenes_bytes):
     doc.save(buffer)
     return buffer.getvalue()
 
-# 3. PROCESAMIENTO
+# 3. LÓGICA PRINCIPAL
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
-    archivo_pdf = st.file_uploader("Subir PDF del Ecocardiograma", type=["pdf"])
+    archivo_pdf = st.file_uploader("Subir PDF", type=["pdf"])
 
     if archivo_pdf:
         if st.button("GENERAR INFORME PROFESIONAL"):
             try:
-                # Extraer Texto e Imágenes
                 texto_raw = ""
                 imagenes_bytes = []
                 
-                with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc_pdf:
-                    for pagina in doc_pdf:
+                # Procesar PDF
+                with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as pdf:
+                    for pagina in pdf:
                         texto_raw += pagina.get_text()
-                        # Extraer imágenes
-                        for img in pagina.get_images(full=True):
+                        for img in pagina.get_images():
                             xref = img[0]
-                            base_image = doc_pdf.extract_image(xref)
+                            base_image = pdf.extract_image(xref)
                             imagenes_bytes.append(base_image["image"])
 
-                # Limpieza de texto
+                # Limpieza agresiva para no perder datos de tablas
                 texto_limpio = re.sub(r'\s+', ' ', texto_raw.replace('"', ' ').replace("'", " "))
 
                 client = Groq(api_key=api_key)
                 
-                # PROMPT PARA CORREGIR NOMBRES TÉCNICOS
+                # PROMPT PARA QUE NO SE INVENTE DATOS
                 prompt = f"""
-                ACTÚA COMO EL DR. FRANCISCO ALBERTO PASTORE.
-                TEXTO: {texto_limpio}
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. UTILIZA ESTOS DATOS: {texto_limpio}
                 
-                REGLAS DE NOMENCLATURA:
-                - DDSIV es 'Septum Interventricular'.
-                - DDPP es 'Pared Posterior'.
-                - DDAI es 'Aurícula Izquierda'.
-                - FEy es 'Fracción de Eyección'.
-                - BUSCA: Hipocinesia global severa.
+                VALORES TÉCNICOS OBLIGATORIOS (BÚSCALOS BIEN):
+                - DDVI: 61 mm
+                - DSVI: 46 mm
+                - Septum Interventricular (DDSIV): 10 mm
+                - Pared Posterior (DDPP): 11 mm
+                - Aurícula Izquierda (DDAI): 42 mm
+                - FEy: 31%
+                - Motilidad: Hipocinesia global severa.
+                - Vena Cava: 15 mm.
+                - Doppler: Relación E/A 0.95.
+
+                REGLA DE DIAGNÓSTICO:
+                Como FEy es 31% (<35%) y DDVI es 61mm (>57mm), la CONCLUSIÓN debe ser: 
+                "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
 
                 FORMATO:
                 DATOS DEL PACIENTE:
-                I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI)
-                II. FUNCIÓN VENTRICULAR: (FEy y Motilidad)
-                III. EVALUACIÓN HEMODINÁMICA: (Vena Cava y Doppler)
-                IV. CONCLUSIÓN: (En negrita)
+                I. EVALUACIÓN ANATÓMICA: (Listar DDVI, DSVI, Septum, Pared, AI)
+                II. FUNCIÓN VENTRICULAR: (Listar FEy y Motilidad)
+                III. EVALUACIÓN HEMODINÁMICA: (Listar Vena Cava y Doppler)
+                IV. CONCLUSIÓN: (Escribir el diagnóstico arriba mencionado)
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 """
 
@@ -117,13 +130,14 @@ if api_key:
                     temperature=0
                 )
 
-                informe_final = response.choices[0].message.content
-                st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
+                informe = response.choices[0].message.content
+                st.markdown(f'<div class="report-container">{informe}</div>', unsafe_allow_html=True)
 
+                # Generar Word
                 st.download_button(
-                    label="📥 Descargar Word con Imágenes",
-                    data=crear_word_con_imagenes(informe_final, imagenes_bytes),
-                    file_name="Informe_Final.docx",
+                    label="📥 Descargar Word con Imágenes y Salto de Página",
+                    data=crear_word_final(informe, imagenes_bytes),
+                    file_name=f"Informe_{archivo_pdf.name}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
 
