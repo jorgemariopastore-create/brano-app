@@ -54,34 +54,32 @@ if api_key:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # LIMPIEZA EXTREMA: Une números con sus etiquetas para evitar que la IA se pierda
+                    # Limpieza para que la IA lea bien los números
                     texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", " ")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT UNIVERSAL ROBUSTO
+                    # PROMPT REFORZADO PARA DETECTAR HIPOCINESIA Y DATOS OCULTOS
                     prompt_final = f"""
-                    ERES EL DR. FRANCISCO ALBERTO PASTORE. DEBES REDACTAR EL INFORME BASADO EN ESTE TEXTO:
+                    ERES EL DR. FRANCISCO ALBERTO PASTORE. REDACTA EL INFORME BASADO EN ESTE TEXTO:
                     {texto_limpio}
 
-                    INSTRUCCIONES DE EXTRACCIÓN (BUSCA ESTOS PATRONES):
-                    - DDVI: Busca 'DDVI' o 'LVIDd'. (En este caso es 61).
-                    - DSVI: Busca 'DSVI' o 'LVIDs'. (En este caso es 46).
-                    - FEy: Busca 'FEy', 'EF' o 'Fracción de eyección'. (En este caso es 31%).
-                    - AI: Busca 'Aurícula', 'DAI' o 'DDAI'. (En este caso es 42).
-                    - Septum/Pared: Busca 'DDSIV' (10) y 'DDPP' (11).
-                    - Motilidad: Busca 'Hipocinesia' o 'Aquinesia'.
-                    - Hemodinamia: Busca 'Vena Cava' (15) y 'Relación E/A' (0.95).
+                    INSTRUCCIONES CRÍTICAS DE EXTRACCIÓN:
+                    1. DDVI: Busca 'DDVI' o 'LVIDd' (En el texto es 61). 
+                    2. DSVI: Busca 'DSVI' o 'LVIDs' (En el texto es 46). 
+                    3. FEy: Busca 'Fracción de eyección' (En el texto es 31%). 
+                    4. MOTILIDAD: Busca específicamente la frase 'Hipocinesia global severa' en el texto. 
+                    5. HEMODINAMIA: Extrae Vena Cava (15mm) y Relación E/A (0.95). 
 
-                    REGLA DE DIAGNÓSTICO:
-                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
+                    REGLA MÉDICA:
+                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda". 
 
                     FORMATO DE SALIDA:
                     DATOS DEL PACIENTE: [Nombre, ID, Fecha]
-                    I. EVALUACIÓN ANATÓMICA: [Mencionar diámetros y espesores encontrados]
-                    II. FUNCIÓN VENTRICULAR: [Mencionar FEy% y Motilidad]
-                    III. EVALUACIÓN HEMODINÁMICA: [Mencionar Vena Cava y Doppler]
+                    I. EVALUACIÓN ANATÓMICA: [DDVI, DSVI, AI, Septum y Pared]
+                    II. FUNCIÓN VENTRICULAR: [FEy y descripción de Hipocinesia global severa]
+                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
                     IV. CONCLUSIÓN: [Diagnóstico en Negrita]
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
@@ -90,7 +88,7 @@ if api_key:
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Eres un transcriptor médico preciso. Los datos siempre están en el texto, búscalos con atención."},
+                            {"role": "system", "content": "Eres un transcriptor médico. No omitas la hipocinesia ni la fracción de eyección."},
                             {"role": "user", "content": prompt_final}
                         ],
                         temperature=0
@@ -111,4 +109,4 @@ if api_key:
                 except Exception as e:
                     st.error(f"Error técnico: {e}")
 else:
-    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets de Streamlit.")
+    st.error("⚠️ Configura la GROQ_API_KEY en los Secrets.")
