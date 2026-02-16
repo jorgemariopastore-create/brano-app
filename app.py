@@ -8,12 +8,12 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓN DE INTERFAZ
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; font-family: Arial; }
+    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; line-height: 1.6; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
@@ -21,14 +21,14 @@ st.markdown("""
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-# 2. FUNCIÓN DE GENERACIÓN DE WORD (CON SALTO DE PÁGINA)
-def generar_word(texto, imagenes):
+# 2. FUNCIÓN DE WORD (CON MEJORAS DE FORMATO)
+def generar_word_profesional(texto, imagenes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
-    # Título Principal
+    # Título centrado
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
@@ -40,7 +40,7 @@ def generar_word(texto, imagenes):
         linea = linea.strip()
         if not linea: continue
         
-        # Salto de página automático antes de la conclusión
+        # SALTO DE PÁGINA antes de Conclusión
         if "IV. CONCLUSIÓN" in linea.upper():
             doc.add_page_break()
         
@@ -48,11 +48,11 @@ def generar_word(texto, imagenes):
         texto_limpio = linea.replace('**', '')
         run = p.add_run(texto_limpio)
         
-        # Negritas para secciones
+        # Negritas automáticas
         if any(enc in texto_limpio.upper() for enc in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
             run.bold = True
 
-    # Anexo de Imágenes (2 por fila)
+    # ANEXO DE IMÁGENES
     if imagenes:
         doc.add_page_break()
         a = doc.add_paragraph()
@@ -66,46 +66,52 @@ def generar_word(texto, imagenes):
             celda = tabla.cell(row, col).paragraphs[0]
             celda.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run_img = celda.add_run()
-            run_img.add_picture(io.BytesIO(img_bytes), width=Inches(2.8))
+            try:
+                run_img.add_picture(io.BytesIO(img_bytes), width=Inches(2.8))
+            except:
+                continue
 
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
-# 3. LÓGICA DE PROCESAMIENTO
+# 3. LÓGICA DE EXTRACCIÓN Y SESIÓN
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
-    archivo = st.file_uploader("Subir PDF del Estudio", type=["pdf"])
+    archivo = st.file_uploader("Subir PDF", type=["pdf"])
     
     if archivo:
-        # Extraer datos solo si no están en memoria
-        if 'texto_raw' not in st.session_state:
-            with fitz.open(stream=archivo.read(), filetype="pdf") as pdf:
+        # Solo procesamos el PDF si el archivo cambió
+        if "file_id" not in st.session_state or st.session_state.file_id != archivo.name:
+            with st.spinner("Leyendo archivo..."):
+                pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 st.session_state.texto_raw = "".join([pag.get_text() for pag in pdf])
                 st.session_state.imagenes = [pdf.extract_image(img[0])["image"] for pag in pdf for img in pag.get_images()]
-        
+                st.session_state.file_id = archivo.name
+                pdf.close()
+
         if st.button("GENERAR INFORME PROFESIONAL"):
             try:
                 client = Groq(api_key=api_key)
                 
-                # Prompt forzado para incluir Peso y Altura
+                # Prompt con énfasis en Hemodinamia y Datos Antropométricos
                 prompt = f"""
-                ERES EL DR. PASTORE. REDACTA EL INFORME CON ESTOS DATOS: {st.session_state.texto_raw}
+                ERES EL DR. PASTORE. UTILIZA ESTE TEXTO: {st.session_state.texto_raw}
                 
-                DATOS OBLIGATORIOS:
-                - Nombre: MANUEL BALEIRON
-                - Peso: 80 kg, Altura: 169 cm, BSA: 1.95 m2.
-                - DDVI: 61mm, DSVI: 46mm, Septum (DDSIV): 10mm, Pared Posterior (DDPP): 11mm, Aurícula: 42mm.
-                - FEy: 31%, Motilidad: Hipocinesia global severa.
-                - Vena Cava: 15mm, Relación E/A: 0.95.
+                INSTRUCCIONES CRÍTICAS:
+                1. DATOS: Incluye Nombre (MANUEL BALEIRON), Peso (80 kg), Altura (169 cm) y BSA (1.95 m2).
+                2. ANATOMÍA: DDVI 61mm, DSVI 46mm, Septum 10mm, Pared 11mm, Aurícula 42mm, Vena Cava 15mm.
+                3. FUNCIÓN: FEy 31%, Motilidad: Hipocinesia global severa.
+                4. HEMODINAMIA: Busca Relación E/A (0.95), Relación E/e' (5.9) y menciona que las presiones de llenado son normales.
+                5. CONCLUSIÓN: Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda.
 
-                ESTRUCTURA:
+                FORMATO:
                 DATOS DEL PACIENTE:
                 I. EVALUACIÓN ANATÓMICA:
                 II. FUNCIÓN VENTRICULAR:
                 III. EVALUACIÓN HEMODINÁMICA:
-                IV. CONCLUSIÓN: (Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda)
+                IV. CONCLUSIÓN:
                 FIRMA: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 """
                 
@@ -116,17 +122,17 @@ if api_key:
                 )
 
                 informe = resp.choices[0].message.content
-                st.session_state.informe_generado = informe
+                st.session_state.ultimo_informe = informe # Guardar para evitar perderlo al descargar
                 
                 st.markdown(f'<div class="report-container">{informe}</div>', unsafe_allow_html=True)
 
                 st.download_button(
                     label="📥 Descargar Informe en Word",
-                    data=generar_word(informe, st.session_state.imagenes),
+                    data=generar_word_profesional(informe, st.session_state.imagenes),
                     file_name=f"Informe_{archivo.name}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as e:
                 st.error(f"Error: {e}")
 else:
-    st.error("Configura la API KEY en los Secrets.")
+    st.error("Configura la API KEY.")
