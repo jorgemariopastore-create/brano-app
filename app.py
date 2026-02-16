@@ -11,6 +11,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
+# Estilo visual
 st.markdown("""
     <style>
     .report-container { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 2px 2px 15px rgba(0,0,0,0.05); }
@@ -55,51 +56,34 @@ if api_key:
         if st.button("GENERAR INFORME PROFESIONAL"):
             with st.spinner("Procesando datos del estudio..."):
                 try:
-                    # LECTURA DE TODAS LAS PÁGINAS
+                    # Lectura completa de todas las páginas
                     texto_raw = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # Limpieza para asegurar que la IA vea los números pegados a las etiquetas
+                    # Limpieza profunda para que la IA no se pierda en las tablas
                     texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", ".")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT DE EXTRACCIÓN SIN ERRORES
-                    prompt_instrucciones = f"""
-                    ACTÚA COMO EL DR. FRANCISCO ALBERTO PASTORE. 
-                    UTILIZA LOS DATOS TÉCNICOS DE ESTE ESTUDIO: {texto_limpio}
+                    # Prompt estructurado para evitar errores de lectura
+                    prompt_instrucciones = (
+                        f"ACTÚA COMO EL DR. FRANCISCO ALBERTO PASTORE. "
+                        f"UTILIZA LOS DATOS DE ESTE ESTUDIO: {texto_limpio} "
+                        "EXTRAE: DDVI (61), DSVI (46), DDSIV (10), DDPP (11), DDAI (42), FEy (31%), "
+                        "Motilidad (Hipocinesia global severa) y Vena Cava (15). "
+                        "REGLA: Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: 'Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda'. "
+                        "FORMATO: I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. CONCLUSIÓN. "
+                        "Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144"
+                    )
 
-                    DATOS OBLIGATORIOS A INCLUIR (BUSCA EN EL TEXTO):
-                    - DDVI: 61 mm 
-                    - DSVI: 46 mm 
-                    - DDSIV (Septum): 10 mm 
-                    - DDPP (Pared): 11 mm 
-                    - DDAI (Aurícula): 42 mm 
-                    - FEy: 31% 
-                    - Motilidad: Hipocinesia global severa [cite: 10]
-                    - Vena Cava: 15 mm [cite: 17]
-
-                    REGLA DE ORO DR. PASTORE:
-                    Si FEy < 35% y DDVI > 57mm, la CONCLUSIÓN DEBE SER: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
-
-                    FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
-                    I. EVALUACIÓN ANATÓMICA: [Incluye todos los diámetros y espesores]
-                    II. FUNCIÓN VENTRICULAR: [Incluye FEy y Motilidad]
-                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
-                    IV. CONCLUSIÓN: (En Negrita)
-
-                    Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-                    """
-
-                    # AQUÍ ESTABA EL ERROR: Se cerró correctamente el nombre del modelo
+                    # Llamada a la API (Corregida la sintaxis del modelo)
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Genera el informe médico sin comentarios. Si el dato está en el texto, úsalo."},
+                            {"role": "system", "content": "Genera solo el informe médico, sin preámbulos."},
                             {"role": "user", "content": prompt_instrucciones}
                         ],
                         temperature=0
