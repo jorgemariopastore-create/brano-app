@@ -38,6 +38,7 @@ def crear_word_profesional(texto):
             run = p.add_run(linea_limpia)
             run.font.name = 'Arial'
             run.font.size = Pt(11)
+            # Detectar secciones principales para negrita
             if any(linea_limpia.upper().startswith(tag) for tag in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA:"]):
                 run.bold = True
     
@@ -53,73 +54,44 @@ if api_key:
 
     if archivo_pdf:
         if st.button("GENERAR INFORME PROFESIONAL"):
-            with st.spinner("Procesando datos del estudio..."):
+            with st.spinner("Analizando estudio médico..."):
                 try:
-                    # LECTURA Y LIMPIEZA PROFUNDA
+                    # LECTURA COMPLETA DE TODAS LAS PÁGINAS
                     texto_raw = ""
                     with fitz.open(stream=archivo_pdf.read(), filetype="pdf") as doc:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # Normalización total del texto para que no haya tablas "rotas"
+                    # LIMPIEZA DE CARACTERES DE TABLA (Crucial para Baleiron)
+                    # Eliminamos comillas y unificamos espacios para que la IA "vea" los números
                     texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", ".")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT MANDATORIO: Prohibido decir que no hay datos
-                    prompt_instrucciones = f"""
-                    ERES UN EXPERTO EN TRANSCRIPCIÓN MÉDICA. TU ÚNICA MISIÓN ES RELLENAR EL INFORME CON LOS DATOS DEL TEXTO.
-                    
-                    TEXTO PARA ANALIZAR: 
-                    {texto_limpio}
+                    # PROMPT DE EXTRACCIÓN TOTAL Y DIAGNÓSTICO
+                    prompt_final = f"""
+                    ERES UN EXPERTO EN CARDIOLOGÍA. REDACTA UN INFORME PARA EL DR. FRANCISCO ALBERTO PASTORE.
+                    UTILIZA ESTE TEXTO DEL ESTUDIO: {texto_limpio}
 
-                    DATOS QUE DEBES ENCONTRAR (ESTÁN EN EL TEXTO):
-                    - DDVI: 61 mm 
-                    - DSVI: 46 mm 
-                    - DDSIV (Septum): 10 mm 
-                    - DDPP (Pared): 11 mm 
-                    - DDAI (Aurícula): 42 mm 
-                    - FEy: 31% [cite: 11]
-                    - Motilidad: Hipocinesia global severa 
-                    - Vena Cava: 15 mm [cite: 17]
-                    - Relación E/A: 0.95 [cite: 19]
+                    INSTRUCCIONES DE EXTRACCIÓN:
+                    1. DATOS: Extrae Nombre, ID y Fecha.
+                    2. ANATOMÍA: Busca DDVI, DSVI, DDAI (Aurícula), DDSIV (Septum) y DDPP (Pared). 
+                    3. FUNCIÓN: Busca FEy (31%) y la descripción de motilidad (Hipocinesia global severa).
+                    4. HEMODINAMIA: Busca Vena Cava y Relación E/A.
 
-                    REGLA DE DIAGNÓSTICO:
-                    Como FEy < 35% y DDVI > 57mm, la CONCLUSIÓN DEBE SER: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda"[cite: 24].
+                    REGLA MÉDICA DR. PASTORE:
+                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN OBLIGATORIA: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
 
-                    FORMATO DE SALIDA REQUERIDO:
-                    DATOS DEL PACIENTE: Manuel Baleiron, 12563493, 27/01/2026 [cite: 2, 4]
-                    I. EVALUACIÓN ANATÓMICA: [DDVI, DSVI, AI, Septum y Pared]
-                    II. FUNCIÓN VENTRICULAR: [FEy y Hipocinesia global severa]
-                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
+                    FORMATO DE SALIDA:
+                    DATOS DEL PACIENTE:
+                    I. EVALUACIÓN ANATÓMICA:
+                    II. FUNCIÓN VENTRICULAR:
+                    III. EVALUACIÓN HEMODINÁMICA:
                     IV. CONCLUSIÓN: (En Negrita)
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
 
                     response = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=[
-                            {"role": "system", "content": "No des explicaciones. Solo genera el informe médico completo. Todos los datos técnicos están presentes en el texto."},
-                            {"role": "user", "content": prompt_instrucciones}
-                        ],
-                        temperature=0
-                    )
-
-                    informe_final = response.choices[0].message.content
-                    
-                    st.markdown("---")
-                    st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
-                    
-                    st.download_button(
-                        label="📥 Descargar Informe en Word",
-                        data=crear_word_profesional(informe_final),
-                        file_name=f"Informe_{archivo_pdf.name.replace('.pdf', '')}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-
-                except Exception as e:
-                    st.error(f"Error técnico: {e}")
-else:
-    st.error("⚠️ Falta la API KEY en los Secrets de Streamlit.")
+                        model="llama-3.3-70b-vers
