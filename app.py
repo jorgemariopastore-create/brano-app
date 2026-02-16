@@ -11,6 +11,13 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 # 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
+st.markdown("""
+    <style>
+    .report-container { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e0e0e0; box-shadow: 2px 2px 15px rgba(0,0,0,0.05); }
+    .stButton>button { background-color: #c62828; color: white; border-radius: 10px; font-weight: bold; width: 100%; height: 3em; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
@@ -54,33 +61,37 @@ if api_key:
                         for pagina in doc:
                             texto_raw += pagina.get_text()
                     
-                    # Limpieza para que la IA lea bien los números
+                    # Limpieza para que la IA lea bien los números de las tablas
                     texto_limpio = texto_raw.replace('"', ' ').replace("'", " ").replace(",", " ")
                     texto_limpio = re.sub(r'\s+', ' ', texto_limpio)
 
                     client = Groq(api_key=api_key)
 
-                    # PROMPT REFORZADO PARA DETECTAR HIPOCINESIA Y DATOS OCULTOS
+                    # PROMPT REFORZADO: Ahora busca explícitamente DDSIV y DDPP
                     prompt_final = f"""
                     ERES EL DR. FRANCISCO ALBERTO PASTORE. REDACTA EL INFORME BASADO EN ESTE TEXTO:
                     {texto_limpio}
 
-                    INSTRUCCIONES CRÍTICAS DE EXTRACCIÓN:
-                    1. DDVI: Busca 'DDVI' o 'LVIDd' (En el texto es 61). 
-                    2. DSVI: Busca 'DSVI' o 'LVIDs' (En el texto es 46). 
-                    3. FEy: Busca 'Fracción de eyección' (En el texto es 31%). 
-                    4. MOTILIDAD: Busca específicamente la frase 'Hipocinesia global severa' en el texto. 
-                    5. HEMODINAMIA: Extrae Vena Cava (15mm) y Relación E/A (0.95). 
+                    INSTRUCCIONES DE EXTRACCIÓN OBLIGATORIAS:
+                    1. DATOS: Nombre, ID y Fecha.
+                    2. ANATOMÍA: 
+                       - DDVI (LVIDd): [Busca el número cerca de DDVI]
+                       - DSVI (LVIDs): [Busca el número cerca de DSVI]
+                       - Septum: [Busca el número cerca de 'DDSIV' o 'Septum']
+                       - Pared: [Busca el número cerca de 'DDPP' o 'Pared posterior']
+                       - Aurícula Izquierda: [Busca el número cerca de 'DDAI' o 'DAI']
+                    3. FUNCIÓN: FEy (EF) y descripción de Motilidad (Busca 'Hipocinesia' o 'Aquinesia').
+                    4. HEMODINAMIA: Vena Cava y Doppler (Relación E/A, Relación E/e').
 
-                    REGLA MÉDICA:
-                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda". 
+                    REGLA MÉDICA DR. PASTORE:
+                    Si FEy < 35% y DDVI > 57mm -> CONCLUSIÓN: "Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda".
 
                     FORMATO DE SALIDA:
-                    DATOS DEL PACIENTE: [Nombre, ID, Fecha]
-                    I. EVALUACIÓN ANATÓMICA: [DDVI, DSVI, AI, Septum y Pared]
-                    II. FUNCIÓN VENTRICULAR: [FEy y descripción de Hipocinesia global severa]
-                    III. EVALUACIÓN HEMODINÁMICA: [Vena Cava y Doppler]
-                    IV. CONCLUSIÓN: [Diagnóstico en Negrita]
+                    DATOS DEL PACIENTE:
+                    I. EVALUACIÓN ANATÓMICA: (Incluir todos los diámetros y espesores de septum/pared)
+                    II. FUNCIÓN VENTRICULAR: (Incluir FEy y detalle de motilidad)
+                    III. EVALUACIÓN HEMODINÁMICA: (Vena Cava y hallazgos Doppler)
+                    IV. CONCLUSIÓN: (En Negrita)
 
                     Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                     """
@@ -88,7 +99,7 @@ if api_key:
                     response = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[
-                            {"role": "system", "content": "Eres un transcriptor médico. No omitas la hipocinesia ni la fracción de eyección."},
+                            {"role": "system", "content": "Eres un cardiólogo experto. No omitas datos de la tabla como Septum (DDSIV) o Pared (DDPP)."},
                             {"role": "user", "content": prompt_final}
                         ],
                         temperature=0
