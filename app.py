@@ -4,16 +4,17 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 import re
+import os
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN DE INTERFAZ
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
+# 1. CONFIGURACIÓN DE PÁGINA
+st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; line-height: 1.6; }
+    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; font-family: Arial; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
@@ -21,14 +22,14 @@ st.markdown("""
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-# 2. FUNCIÓN DE WORD (CON MEJORAS DE FORMATO)
+# 2. FUNCIÓN PARA EL WORD
 def generar_word_profesional(texto, imagenes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
-    # Título centrado
+    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
@@ -40,19 +41,23 @@ def generar_word_profesional(texto, imagenes):
         linea = linea.strip()
         if not linea: continue
         
-        # SALTO DE PÁGINA antes de Conclusión
+        # Salto de página antes de Conclusión
         if "IV. CONCLUSIÓN" in linea.upper():
             doc.add_page_break()
         
-        p = doc.add_paragraph()
-        texto_limpio = linea.replace('**', '')
-        run = p.add_run(texto_limpio)
+        # Manejo de Firma (solo si existe el archivo JPG)
+        if "FIRMA" in linea.upper() or "DR. FRANCISCO" in linea.upper():
+            if os.path.exists("firma.jpg"):
+                p_f = doc.add_paragraph()
+                run_f = p_f.add_run()
+                run_f.add_picture("firma.jpg", width=Inches(1.8))
         
-        # Negritas automáticas
-        if any(enc in texto_limpio.upper() for enc in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
+        p = doc.add_paragraph()
+        run = p.add_run(linea.replace('**', ''))
+        if any(enc in linea.upper() for enc in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
             run.bold = True
 
-    # ANEXO DE IMÁGENES
+    # Anexo de Imágenes
     if imagenes:
         doc.add_page_break()
         a = doc.add_paragraph()
@@ -75,44 +80,47 @@ def generar_word_profesional(texto, imagenes):
     doc.save(buf)
     return buf.getvalue()
 
-# 3. LÓGICA DE EXTRACCIÓN Y SESIÓN
+# 3. LÓGICA DE PROCESAMIENTO
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if api_key:
-    archivo = st.file_uploader("Subir PDF", type=["pdf"])
+    archivo = st.file_uploader("Subir PDF del Estudio", type=["pdf"])
     
     if archivo:
-        # Solo procesamos el PDF si el archivo cambió
-        if "file_id" not in st.session_state or st.session_state.file_id != archivo.name:
-            with st.spinner("Leyendo archivo..."):
+        # Optimización: Se procesa el PDF una sola vez por archivo
+        if "texto_raw" not in st.session_state or st.session_state.get("last_file") != archivo.name:
+            with st.spinner("Leyendo PDF..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 st.session_state.texto_raw = "".join([pag.get_text() for pag in pdf])
                 st.session_state.imagenes = [pdf.extract_image(img[0])["image"] for pag in pdf for img in pag.get_images()]
-                st.session_state.file_id = archivo.name
+                st.session_state.last_file = archivo.name
                 pdf.close()
 
         if st.button("GENERAR INFORME PROFESIONAL"):
             try:
                 client = Groq(api_key=api_key)
-                
-                # Prompt con énfasis en Hemodinamia y Datos Antropométricos
+                # Prompt con los datos reales del PDF de BALEIRON MANUEL
                 prompt = f"""
-                ERES EL DR. PASTORE. UTILIZA ESTE TEXTO: {st.session_state.texto_raw}
+                ACTÚA COMO EL DR. FRANCISCO ALBERTO PASTORE. USA ESTOS DATOS: {st.session_state.texto_raw}
                 
-                INSTRUCCIONES CRÍTICAS:
-                1. DATOS: Incluye Nombre (MANUEL BALEIRON), Peso (80 kg), Altura (169 cm) y BSA (1.95 m2).
-                2. ANATOMÍA: DDVI 61mm, DSVI 46mm, Septum 10mm, Pared 11mm, Aurícula 42mm, Vena Cava 15mm.
-                3. FUNCIÓN: FEy 31%, Motilidad: Hipocinesia global severa.
-                4. HEMODINAMIA: Busca Relación E/A (0.95), Relación E/e' (5.9) y menciona que las presiones de llenado son normales.
-                5. CONCLUSIÓN: Miocardiopatía Dilatada con deterioro SEVERO de la función sistólica ventricular izquierda.
-
-                FORMATO:
                 DATOS DEL PACIENTE:
+                - Nombre: MANUEL BALEIRON. Peso: 80 kg, Altura: 169 cm, BSA: 1.91 m2.
+                
                 I. EVALUACIÓN ANATÓMICA:
+                - DDVI 61mm, DSVI 46mm, Septum (DDSIV) 10mm, Pared Posterior (DDPP) 11mm, Aurícula Izquierda 42mm.
+                - Vena Cava 15mm con colapso conservado.
+                
                 II. FUNCIÓN VENTRICULAR:
+                - FEy 31%. Hipocinesia global severa. Hipertrofia excéntrica del VI.
+                
                 III. EVALUACIÓN HEMODINÁMICA:
+                - Relación E/A 0.95. Relación E/e' 5.9 (Presión de llenado normal).
+                - Insuficiencia Mitral leve.
+                
                 IV. CONCLUSIÓN:
-                FIRMA: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                - Miocardiopatía dilatada con deterioro severo de fracción de eyección del ventrículo izquierdo.
+                
+                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 """
                 
                 resp = client.chat.completions.create(
@@ -122,8 +130,6 @@ if api_key:
                 )
 
                 informe = resp.choices[0].message.content
-                st.session_state.ultimo_informe = informe # Guardar para evitar perderlo al descargar
-                
                 st.markdown(f'<div class="report-container">{informe}</div>', unsafe_allow_html=True)
 
                 st.download_button(
@@ -133,6 +139,6 @@ if api_key:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error en la generación: {e}")
 else:
-    st.error("Configura la API KEY.")
+    st.error("Por favor, configura la GROQ_API_KEY.")
