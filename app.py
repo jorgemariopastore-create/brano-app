@@ -3,88 +3,68 @@ import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
 import io
-import os
 from docx import Document
-from docx.shared import Pt, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
-
-st.markdown("""
-    <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; }
-    .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; border: none; }
-    </style>
-    """, unsafe_allow_html=True)
+# 1. Configuración básica
+st.set_page_config(page_title="CardioReport", layout="centered")
 
 st.title("❤️ Sistema de Informes Médicos")
-st.subheader("Dr. Francisco Alberto Pastore - MN 74144")
+st.subheader("Dr. Francisco Alberto Pastore")
 
-archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
-
-def crear_word(texto_final):
-    doc = Document()
-    style = doc.styles['Normal']
-    style.font.name = 'Arial'
-    style.font.size = Pt(11)
-    
-    t = doc.add_paragraph()
-    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
-
-    for linea in texto_final.split('\n'):
-        if not linea.strip(): continue
-        p = doc.add_paragraph()
-        run = p.add_run(linea.replace('**', ''))
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
-            run.bold = True
-
-    if os.path.exists("firma.jpg"):
-        try:
-            doc.add_paragraph().add_run().add_picture("firma.jpg", width=Inches(1.8))
-        except: pass
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
+# 2. Entrada de datos
+archivo = st.file_uploader("📂 Subir PDF", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if archivo and api_key:
-    # Usamos caché para que el PDF no se procese dos veces (evita el botón rojo)
-    if "pdf_text" not in st.session_state or st.session_state.get("last_file") != archivo.name:
-        pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-        st.session_state.pdf_text = "\n".join([p.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) for p in pdf])
-        st.session_state.last_file = archivo.name
-        pdf.close()
+    # 3. Lectura directa (Sin funciones complejas que saturen la memoria)
+    pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+    texto_sucio = ""
+    for pagina in pdf:
+        texto_sucio += pagina.get_text() + "\n"
+    pdf.close()
 
-    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
+    if st.button("🚀 GENERAR INFORME"):
         try:
             client = Groq(api_key=api_key)
+            # Un prompt directo, sin vueltas
             prompt = f"""
-            ERES EL DR. PASTORE. EXTRAE LOS DATOS Y REDACTA EL INFORME MÉDICO.
-            MANTÉN EL FORMATO: DATOS PACIENTE, I. ANATÓMICA, II. VENTRICULAR, III. HEMODINÁMICA, IV. CONCLUSIÓN.
-            FIRMA: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+            Actúa como el Dr. Pastore. Del siguiente texto de un ecógrafo SonoScape E3, 
+            extrae los valores (DDVI, DSVI, FEy, etc.) y redacta un informe profesional.
             
-            TEXTO:
-            {st.session_state.pdf_text}
+            Usa este formato:
+            DATOS DEL PACIENTE:
+            I. EVALUACIÓN ANATÓMICA:
+            II. FUNCIÓN VENTRICULAR:
+            III. EVALUACIÓN HEMODINÁMICA:
+            IV. CONCLUSIÓN:
+            
+            Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+            
+            TEXTO DEL PDF:
+            {texto_sucio}
             """
-            resp = client.chat.completions.create(
+            
+            completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0
             )
-            st.session_state.informe_ok = resp.choices[0].message.content
-            st.markdown(f'<div class="report-container">{st.session_state.informe_ok}</div>', unsafe_allow_html=True)
+            
+            informe = completion.choices[0].message.content
+            st.write(informe)
+            
+            # 4. Descarga simple
+            doc = Document()
+            doc.add_paragraph(informe)
+            target = io.BytesIO()
+            doc.save(target)
+            
+            st.download_button(
+                label="📥 Descargar Word",
+                data=target.getvalue(),
+                file_name="informe.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            
         except Exception as e:
-            st.error(f"Error: {e}")
-
-    # LA DESCARGA AHORA ES SEGURA
-    if "informe_ok" in st.session_state:
-        st.download_button(
-            label="📥 Descargar Word",
-            data=crear_word(st.session_state.informe_ok),
-            file_name=f"Informe_{archivo.name}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+            st.error(f"Ocurrió un error: {e}")
