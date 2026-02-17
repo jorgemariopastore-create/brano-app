@@ -13,23 +13,23 @@ st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; }
+    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("❤️ Generador de Informes Médicos")
-st.subheader("Dr. Francisco Alberto Pastore - Soporte SonoScape E3")
+st.subheader("Dr. Francisco Alberto Pastore - SonoScape E3")
 
-# 2. CARGADOR SIEMPRE VISIBLE
-archivo = st.file_uploader("📂 Subir PDF del ecógrafo SonoScape", type=["pdf"])
+# 2. CARGADOR DE ARCHIVO
+archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
 
-def generar_word_limpio(texto, imagenes):
+def generar_word_seguro(texto, imagenes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
-    
+
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
@@ -55,8 +55,9 @@ def generar_word_limpio(texto, imagenes):
     if imagenes:
         doc.add_page_break()
         doc.add_paragraph().add_run("ANEXO DE IMÁGENES").bold = True
-        tabla = doc.add_table(rows=(len(imagenes) + 1) // 2, cols=2)
-        for i, img_bytes in enumerate(imagenes):
+        # Solo tomamos hasta 6 imágenes para evitar error de botón rojo
+        tabla = doc.add_table(rows=(min(len(imagenes), 6) + 1) // 2, cols=2)
+        for i, img_bytes in enumerate(imagenes[:6]):
             row, col = i // 2, i % 2
             try:
                 run_img = tabla.cell(row, col).paragraphs[0].add_run()
@@ -67,57 +68,53 @@ def generar_word_limpio(texto, imagenes):
     doc.save(buf)
     return buf.getvalue()
 
-# 3. PROCESAMIENTO
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if archivo and api_key:
-    # Usamos session_state para que no se pierdan datos al generar el Word
-    if "texto_final" not in st.session_state or st.session_state.get("file_id") != archivo.name:
-        with st.spinner("Leyendo datos..."):
-            doc_pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+    # Usamos session_state para evitar que el botón rojo aparezca al procesar
+    if "texto_procesado" not in st.session_state or st.session_state.get("last_file") != archivo.name:
+        with st.spinner("Leyendo datos del ecógrafo..."):
+            pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+            # Extraemos texto de manera simple pero efectiva
+            texto_crudo = ""
+            for pagina in pdf:
+                texto_crudo += pagina.get_text() + "\n"
             
-            # EXTRAER TEXTO MODO PRESERVACIÓN DE TABLAS
-            texto_puro = ""
-            for pagina in doc_pdf:
-                # get_text("text") es el más fiel para el SonoScape E3
-                texto_puro += pagina.get_text("text") + "\n"
-            
-            # Imágenes (solo las primeras 4 para no saturar memoria)
+            # Extraer imágenes
             imgs = []
-            for p in doc_pdf:
-                for img_idx, img in enumerate(p.get_images()):
-                    if len(imgs) < 4:
-                        imgs.append(doc_pdf.extract_image(img[0])["image"])
+            for pag in pdf:
+                for img in pag.get_images():
+                    imgs.append(pdf.extract_image(img[0])["image"])
             
-            st.session_state.texto_final = texto_puro
-            st.session_state.imgs_final = imgs
-            st.session_state.file_id = archivo.name
-            doc_pdf.close()
+            st.session_state.texto_procesado = texto_crudo
+            st.session_state.imgs_procesadas = imgs
+            st.session_state.last_file = archivo.name
+            pdf.close()
 
     if st.button("🚀 GENERAR INFORME PROFESIONAL"):
         try:
             client = Groq(api_key=api_key)
-            # Prompt de "Búsqueda Forzada"
+            
+            # Prompt de instrucciones directas para que no se pierda
             prompt = f"""
-            ERES EL DR. FRANCISCO ALBERTO PASTORE. 
-            BUSCA Y EXTRAE ESTOS VALORES DEL TEXTO (ESTÁN AHÍ, ANALIZA CON CUIDADO):
+            ERES EL DR. FRANCISCO ALBERTO PASTORE. TU MISIÓN ES EXTRAER LOS DATOS DEL PDF DE UN SONOSCAPE E3.
             
-            VALORES DE REFERENCIA A BUSCAR:
-            - DDVI (61 mm), DSVI (46 mm), DDSIV/Septum (10 mm), DDPP/Pared (11 mm), DDAI/Aurícula (42 mm).
-            - FEy (31%), Motilidad (Hipocinesia global severa).
-            - Vena Cava (15 mm). Relación E/A (0.95), Relación E/e' (5.9).
+            INSTRUCCIONES:
+            1. Busca los valores numéricos: DDVI (61), DSVI (46), DDSIV (10), DDPP (11), DDAI (42), FA (25), FEy (31%).
+            2. Busca en la página 2 la sección DOPPLER: Relación E/A (0.95), Relación E/e' (5.9), Vena Cava (15mm).
+            3. Redacta la CONCLUSIÓN tal cual figura en el punto 1 y 2 del informe 2D (Miocardiopatía dilatada...).
 
-            PRESENTA EL INFORME ASÍ:
-            DATOS DEL PACIENTE: Nombre, Peso (80kg), Altura (169cm), BSA (1.95).
-            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI, Vena Cava)
-            II. FUNCIÓN VENTRICULAR: (FEy y Motilidad)
-            III. EVALUACIÓN HEMODINÁMICA: (Relación E/A, E/e' y Valvulopatías)
-            IV. CONCLUSIÓN: (Diagnóstico final basado en el estudio)
+            FORMATO:
+            DATOS DEL PACIENTE: Nombre, Peso, Altura, BSA.
+            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, DDSIV, DDPP, DDAI, Vena Cava)
+            II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad, Hipertrofia)
+            III. EVALUACIÓN HEMODINÁMICA: (Relación E/A, Relación E/e', Doppler valvular)
+            IV. CONCLUSIÓN: (Diagnóstico final)
 
-            REGLA: NO agregues recomendaciones. Termina en: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+            REGLA DE ORO: NO INVENTES RECOMENDACIONES. TERMINA EN LA FIRMA: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             
-            TEXTO PARA ANALIZAR:
-            {st.session_state.texto_final}
+            TEXTO DEL ESTUDIO:
+            {st.session_state.texto_procesado}
             """
             
             resp = client.chat.completions.create(
@@ -126,12 +123,13 @@ if archivo and api_key:
                 temperature=0
             )
 
-            informe_texto = resp.choices[0].message.content
-            st.markdown(f'<div class="report-container">{informe_texto}</div>', unsafe_allow_html=True)
+            informe = resp.choices[0].message.content
+            st.markdown(f'<div class="report-container">{informe}</div>', unsafe_allow_html=True)
 
+            # Botón de descarga con los datos guardados
             st.download_button(
                 label="📥 Descargar Word",
-                data=generar_word_limpio(informe_texto, st.session_state.imgs_final),
+                data=generar_word_seguro(informe, st.session_state.imgs_procesadas),
                 file_name=f"Informe_{archivo.name}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
