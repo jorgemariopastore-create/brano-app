@@ -8,12 +8,12 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓN DE LA PÁGINA
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; }
+    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; white-space: pre-wrap; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
@@ -21,10 +21,10 @@ st.markdown("""
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore - Motor Gemini 1.5")
 
-# 2. CARGADOR
-archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
+# 2. LÓGICA DE CARGA Y PROCESAMIENTO
+archivo = st.file_uploader("📂 Subir PDF del ecógrafo SonoScape E3", type=["pdf"])
 
-def crear_word(texto, imagenes):
+def crear_word(texto):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
@@ -38,59 +38,72 @@ def crear_word(texto, imagenes):
         if not linea.strip(): continue
         p = doc.add_paragraph()
         run = p.add_run(linea.replace('**', ''))
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS"]):
+        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
             run.bold = True
 
     if os.path.exists("firma.jpg"):
+        doc.add_paragraph()
         doc.add_paragraph().add_run().add_picture("firma.jpg", width=Inches(1.8))
 
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
-# 3. LÓGICA GEMINI
-# Usa la misma clave que tenías, pero asegúrate de que sea una de Google AI Studio
-api_key = st.secrets.get("GEMINI_API_KEY") 
+# 3. CONEXIÓN CON GEMINI
+# Asegúrate de tener la clave en Settings > Secrets con el nombre GEMINI_API_KEY
+api_key = st.secrets.get("GEMINI_API_KEY")
 
 if archivo and api_key:
-    if "texto_pdf" not in st.session_state:
-        with st.spinner("Analizando con Visión de Gemini..."):
+    if "texto_extraido" not in st.session_state or st.session_state.get("nombre_archivo") != archivo.name:
+        with st.spinner("Leyendo PDF con motor Gemini..."):
             pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-            # Extraemos texto manteniendo el formato visual exacto
-            st.session_state.texto_pdf = "\n".join([p.get_text("text") for p in pdf])
+            # Extraemos texto preservando la estructura visual
+            st.session_state.texto_extraido = "\n".join([p.get_text("text") for p in pdf])
+            st.session_state.nombre_archivo = archivo.name
             pdf.close()
 
-    if st.button("🚀 GENERAR INFORME"):
+    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')
             
             prompt = f"""
-            Actúa como el Dr. Pastore. Del siguiente texto de un SonoScape E3, extrae:
-            1. DDVI, DSVI, FA, DDSIV, DDPP, DDAI (están en mm).
-            2. FEy (31%), Motilidad (Hipocinesia), Vena Cava (15mm).
-            3. Relación E/A y E/e'.
+            Eres el Dr. Pastore. Del siguiente texto de un ecógrafo SonoScape E3, extrae con precisión:
+            - Paciente: Nombre, Peso, Altura, BSA.
+            - Valores mm: DDVI, DSVI, FA, DDSIV (Septum), DDPP (Pared), DDAI (Aurícula).
+            - Función: FEy (31%), Motilidad (Hipocinesia), Vena Cava (15mm).
+            - Hemodinamia: Relación E/A y Relación E/e'.
+            - Conclusión: Resume los hallazgos principales (Miocardiopatía, etc).
+
+            IMPORTANTE: Los números están en el texto, búscalos con cuidado.
             
             Formato:
-            DATOS DEL PACIENTE: Nombre, Peso, Altura, BSA.
-            I. EVALUACIÓN ANATÓMICA: (Valores mm)
-            II. FUNCIÓN VENTRICULAR: (FEy, Motilidad)
-            III. EVALUACIÓN HEMODINÁMICA: (Doppler)
-            IV. CONCLUSIÓN: (Diagnóstico)
+            DATOS DEL PACIENTE: [Datos]
+            I. EVALUACIÓN ANATÓMICA: [Valores mm y Vena Cava]
+            II. FUNCIÓN VENTRICULAR: [FEy, FA, Motilidad]
+            III. EVALUACIÓN HEMODINÁMICA: [Doppler]
+            IV. CONCLUSIÓN: [Diagnóstico]
             
             Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             
             TEXTO:
-            {st.session_state.texto_pdf}
+            {st.session_state.texto_extraido}
             """
             
             response = model.generate_content(prompt)
-            st.session_state.res_final = response.text
+            st.session_state.resultado_gemini = response.text
             st.markdown(f'<div class="report-container">{response.text}</div>', unsafe_allow_html=True)
             
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error de conexión con Gemini: {e}")
 
-    if "res_final" in st.session_state:
-        st.download_button("📥 Descargar Word", crear_word(st.session_state.res_final, []), "informe.docx")
-        
+    if "resultado_gemini" in st.session_state:
+        st.download_button(
+            label="📥 Descargar Informe en Word",
+            data=crear_word(st.session_state.resultado_gemini),
+            file_name=f"Informe_{st.session_state.nombre_archivo}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+else:
+    if not api_key:
+        st.warning("⚠️ Falta la clave GEMINI_API_KEY en los secretos de Streamlit.")
