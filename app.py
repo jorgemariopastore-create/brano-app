@@ -7,7 +7,6 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. Configuración de la interfaz
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
@@ -27,7 +26,7 @@ def generar_docx_profesional(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información"]):
+        if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información", "proporcionado"]):
             continue
             
         p = doc.add_paragraph()
@@ -63,41 +62,41 @@ def generar_docx_profesional(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Analizando datos del estudio..."):
+            with st.spinner("Buscando mediciones en las tablas de Alicia..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 texto_pdf = ""
                 for pagina in pdf:
-                    texto_pdf += pagina.get_text("text", sort=True) + "\n"
+                    # Usamos preservación de espacios en blanco para mantener la estructura de la tabla
+                    texto_pdf += pagina.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) + "\n"
                 pdf.close()
 
                 client = Groq(api_key=api_key)
                 
-                # EL BLOQUE DEL PROMPT (Asegúrate de que termine en """)
                 prompt = f"""
-ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRASCRIBIR LOS DATOS DEL PDF AL INFORME.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES EXTRAER LOS DATOS DEL PDF.
+                
+                ATENCIÓN: Los datos de Alicia Albornoz ESTÁN en el texto. Búscalos así:
+                - DDVI: Busca el número cerca de "DDVI" o "Diámetro diastólico". (Ej: 40)
+                - FEy: Busca el número con % cerca de "EF" o "FEy". (Ej: 67%)
+                - Altura/Peso: Están en la cabecera. (Ej: 152cm, 56kg)
 
-INSTRUCCIONES DE EXTRACCIÓN:
-1. DATOS DEL PACIENTE: Busca Nombre, ID, Peso (kg), Altura (cm) y BSA.
-2. EVALUACIÓN ANATÓMICA: Extrae DDVI, DSVI, Septum (DDSIV), Pared (DDPP) y AI (DDAI).
-3. FUNCIÓN VENTRICULAR: Extrae FEy (EF) y FA. Determina la motilidad.
-4. HEMODINAMIA: Extrae E/A, E/e' y Vena Cava.
+                LÓGICA MÉDICA:
+                - Si la FEy es >= 55%: Conclusión "Función ventricular conservada".
+                - Si la FEy es < 50%: Conclusión "Disfunción ventricular".
 
-LÓGICA DE CONCLUSIÓN:
-- Si la FEy es >= 55%: "Función ventricular conservada".
-- Si la FEy es < 50%: "Disfunción ventricular" especificando el grado.
-
-FORMATO OBLIGATORIO:
-DATOS DEL PACIENTE:
-I. EVALUACIÓN ANATÓMICA:
-II. FUNCIÓN VENTRICULAR:
-III. EVALUACIÓN HEMODINÁMICA:
-IV. CONCLUSIÓN:
-Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-
-TEXTO DEL PDF:
-{texto_pdf}
-"""
-                # FIN DEL PROMPT
+                FORMATO OBLIGATORIO:
+                DATOS DEL PACIENTE: (Nombre, ID, Peso, Altura, BSA)
+                I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI)
+                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad)
+                III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
+                IV. CONCLUSIÓN:
+                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                
+                REGLA DE ORO: Si ves un número cerca de una sigla médica, ÚSALO. No digas que no hay datos.
+                
+                TEXTO DEL PDF:
+                {texto_pdf}
+                """
 
                 resp = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
@@ -109,7 +108,7 @@ TEXTO DEL PDF:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Informe", docx_out, f"Informe_{archivo.name}.docx")
+                st.download_button("📥 Descargar Informe Alicia", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
