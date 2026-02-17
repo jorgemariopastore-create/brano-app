@@ -7,6 +7,7 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# 1. Configuración de la interfaz
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
@@ -26,8 +27,8 @@ def generar_docx_profesional(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        # Filtro estricto para que no pasen disculpas de la IA al documento
-        if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información", "proporcionado"]):
+        # Filtro de seguridad para eliminar frases de "disculpa" de la IA
+        if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información", "espero que"]):
             continue
             
         p = doc.add_paragraph()
@@ -63,39 +64,42 @@ def generar_docx_profesional(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Analizando minuciosamente las tablas de Alicia..."):
+            with st.spinner("Analizando tablas de mediciones con alta precisión..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 texto_pdf = ""
                 for pagina in pdf:
-                    # CLAVE: preservamos los espacios para que la IA vea la tabla como tal
-                    texto_pdf += pagina.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) + "\n"
+                    # CAMBIO CLAVE: Extraemos palabras con su posición para no mezclar columnas
+                    words = pagina.get_text("words", sort=True)
+                    texto_pdf += " ".join([w[4] for w in words]) + "\n"
                 pdf.close()
 
                 client = Groq(api_key=api_key)
                 
-                # Prompt con instrucciones de búsqueda forzada
+                # Prompt mejorado para detectar valores entre paréntesis y tablas Sonoscape
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES EXTRAER LOS DATOS DEL ESTUDIO.
-                
-                ATENCIÓN: Los datos de ALICIA ALBORNOZ están en formato de tabla. Búscalos así:
-                - DDVI: busca el número cerca de 'DDVI' (debería ser 40).
-                - FEy (EF): busca el porcentaje (debería ser 67%).
-                - Hemodinamia: busca E/A (0.77) y E/e' (5.6).
+ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES TRASCRIBIR LOS DATOS DEL PDF AL INFORME.
 
-                REGLA DE ORO: No digas que faltan datos. Si ves un número cerca de una sigla, úsalo.
-                
-                ESTRUCTURA OBLIGATORIA:
-                DATOS DEL PACIENTE: (Nombre, ID, Peso, Altura, BSA)
-                I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI)
-                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad: Normal)
-                III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
-                IV. CONCLUSIÓN: (Basada en los hallazgos. Si la FEy es 67%, la función es CONSERVADA).
-                
-                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-                
-                TEXTO DEL PDF:
-                {texto_pdf}
-                """
+REGLAS DE EXTRACCIÓN PARA TABLAS SONOSCAPE:
+1. DATOS DEL PACIENTE: Extrae Nombre, ID, Peso, Altura y BSA.
+2. CAVIDADES: Busca DDVI, DSVI, Septum (DDSIV), Pared (DDPP) y AI (DDAI). Ignora los valores entre paréntesis (rangos de referencia).
+3. FUNCIÓN: Extrae FEy (EF) y FA. 
+4. DOPPLER: Extrae E/A, E/e' y Vena Cava.
+
+LÓGICA MÉDICA:
+- Si la FEy es >= 55% (como el 67% de Alicia): "Función ventricular conservada".
+- Si la FEy es < 50%: "Disfunción ventricular".
+
+FORMATO OBLIGATORIO:
+DATOS DEL PACIENTE:
+I. EVALUACIÓN ANATÓMICA:
+II. FUNCIÓN VENTRICULAR:
+III. EVALUACIÓN HEMODINÁMICA:
+IV. CONCLUSIÓN:
+Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+
+TEXTO EXTRAÍDO DEL PDF:
+{texto_pdf}
+"""
 
                 resp = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
@@ -107,7 +111,7 @@ if archivo and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Informe Alicia Corregido", docx_out, f"Informe_{archivo.name}.docx")
+                st.download_button("📥 Descargar Informe Oficial", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
