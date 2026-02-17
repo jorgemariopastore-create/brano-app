@@ -26,6 +26,7 @@ def generar_docx(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
+        # Filtro de seguridad para evitar frases de error o disculpas de la IA
         if not linea or any(x in linea.lower() for x in ["lo siento", "no se proporcionan", "falta de información"]):
             continue
         p = doc.add_paragraph()
@@ -59,34 +60,33 @@ def generar_docx(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Analizando minuciosamente los datos de las tablas..."):
+            with st.spinner("Analizando tablas de mediciones..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-                # EXTRAER TEXTO DE FORMA BRUTA Y POR BLOQUES
                 texto_pdf = ""
                 for pagina in pdf:
-                    texto_pdf += pagina.get_text("blocks") # Usamos blocks para no perder estructura de tablas
+                    # CORRECCIÓN DEL ERROR: Extraemos el texto de los bloques correctamente
+                    bloques = pagina.get_text("blocks")
+                    texto_pdf += "\n".join([b[4] for b in bloques]) 
                 pdf.close()
 
                 client = Groq(api_key=api_key)
-                # PROMPT DE EXTRACCIÓN AGRESIVA
                 prompt = f"""
-                ERES UN EXPERTO EN EXTRACCIÓN DE DATOS DE ECOCARDIOGRAMA (SONOSCAPE E3).
-                TU TRABAJO ES SER EL DR. PASTORE Y REDACTAR EL INFORME.
+                ERES UN EXPERTO EN EXTRACCIÓN DE DATOS DE ECOCARDIOGRAMA.
+                REDACTA EL INFORME DEL DR. PASTORE USANDO LOS DATOS DE LAS TABLAS DEL PDF.
                 
-                DAME LOS DATOS QUE ESTÁN EN LAS TABLAS DEL SIGUIENTE TEXTO.
-                SI VES VALORES COMO '40 mm', '25 mm', '67%', ÚSALOS.
+                IMPORTANTE: 
+                - Busca valores como DDVI, DSVI, FEy (EF), E/A, E/e'.
+                - Si el valor está en una tabla, el nombre y el número pueden estar en líneas distintas.
+                - REDACTA UNA CONCLUSIÓN MÉDICA REAL basada en los hallazgos.
                 
-                ESTRUCTURA DEL INFORME (OBLIGATORIA):
-                DATOS DEL PACIENTE: (Nombre, ID, Peso, Altura, BSA)
-                I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI)
-                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad)
-                III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
-                IV. CONCLUSIÓN: (Redacta una conclusión médica según la FEy encontrada)
+                ESTRUCTURA:
+                DATOS DEL PACIENTE:
+                I. EVALUACIÓN ANATÓMICA:
+                II. FUNCIÓN VENTRICULAR:
+                III. EVALUACIÓN HEMODINÁMICA:
+                IV. CONCLUSIÓN:
                 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-                
-                REGLA: ESTÁ PROHIBIDO DECIR "NO SE PROPORCIONAN DATOS". 
-                BUSCA EN CADA RINCÓN DEL TEXTO.
                 
                 TEXTO DEL PDF:
                 {texto_pdf}
@@ -105,4 +105,4 @@ if archivo and api_key:
                 st.download_button("📥 Descargar Word", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error técnico: {e}")
