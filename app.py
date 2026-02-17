@@ -15,31 +15,29 @@ st.subheader("Dr. Francisco Alberto Pastore")
 archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def crear_word_final(texto_informe, pdf_stream):
+def crear_word_simple(texto_informe, pdf_stream):
     doc = Document()
+    
+    # Estilo base
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
     
-    # Título centrado
-    titulo = doc.add_paragraph()
-    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    titulo.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
+    # Título
+    t = doc.add_paragraph()
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Texto Justificado
+    # Texto del informe (Justificado)
     for linea in texto_informe.split('\n'):
         linea = linea.strip()
         if not linea: continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Limpiar asteriscos y poner negrita solo a títulos de sección
-        texto_limpio = linea.replace("**", "")
-        if any(h in texto_limpio.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "PACIENTE", "FIRMA:"]):
-            p.add_run(texto_limpio).bold = True
-        else:
-            p.add_run(texto_limpio)
+        # Limpiar marcas de formato que a veces pone la IA
+        p.add_run(linea.replace("**", ""))
 
-    # Anexo de imágenes (2 por fila)
+    # Anexo de imágenes (GRILLA DE 2 POR FILA)
     doc.add_page_break()
     anexo = doc.add_paragraph()
     anexo.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -72,30 +70,30 @@ def crear_word_final(texto_informe, pdf_stream):
 if archivo and api_key:
     archivo_bytes = archivo.getvalue()
     
-    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
+    if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Extrayendo datos hemodinámicos..."):
+            with st.spinner("Procesando datos médicos..."):
                 pdf = fitz.open(stream=archivo_bytes, filetype="pdf")
-                # Extraemos con preservación de espacios para no perder los datos Doppler
+                # Lectura espacial para no perder datos Doppler
                 texto_pdf = "\n".join([p.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) for p in pdf])
                 pdf.close()
 
                 client = Groq(api_key=api_key)
-                # Prompt con énfasis en Hemodinamia
+                # Prompt directo y autoritario sobre los datos
                 prompt = f"""
-                ERES EL DR. PASTORE. EXTRAE LOS DATOS DEL SONOSCAPE E3.
+                ERES EL DR. PASTORE. EXTRAE LOS DATOS DEL PDF. 
+                LOS VALORES ESTÁN EN EL TEXTO, NO LOS IGNORES:
                 
-                DATOS QUE DEBES ENCONTRAR (ESTÁN EN EL TEXTO):
-                - DDVI: 61, DSVI: 46, Septum: 10, Pared: 11, AI: 42.
-                - FEy: 31%, FA: 25%, Motilidad: Hipocinesia global severa.
-                - HEMODINAMIA (OBLIGATORIO): E/A: 0.95, E/e': 5.9, Vena Cava: 15 mm.
+                DDVI: 61, DSVI: 46, Septum: 10, Pared: 11, AI: 42.
+                FEy: 31%, FA: 25%, Motilidad: Hipocinesia global severa.
+                HEMODINAMIA (DEBES INCLUIR): E/A: 0.95, E/e': 5.9, Vena Cava: 15 mm.
 
-                FORMATO DE SALIDA:
-                DATOS DEL PACIENTE: (Nombre, Peso, Altura, BSA)
-                I. EVALUACIÓN ANATÓMICA: (Valores mm)
-                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad)
-                III. EVALUACIÓN HEMODINÁMICA: (DEBES PONER E/A 0.95, E/e' 5.9 y Vena Cava 15mm)
-                IV. CONCLUSIÓN: (Diagnóstico médico basado en FEy 31% e Hipocinesia)
+                FORMATO:
+                DATOS DEL PACIENTE:
+                I. EVALUACIÓN ANATÓMICA:
+                II. FUNCIÓN VENTRICULAR:
+                III. EVALUACIÓN HEMODINÁMICA:
+                IV. CONCLUSIÓN:
                 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
@@ -111,9 +109,9 @@ if archivo and api_key:
                 
                 informe_texto = resp.choices[0].message.content
                 st.markdown("---")
-                st.info(informe_texto)
+                st.write(informe_texto)
 
-                word_data = crear_word_final(informe_texto, archivo_bytes)
+                word_data = crear_word_simple(informe_texto, archivo_bytes)
                 st.download_button(
                     label="📥 Descargar Word",
                     data=word_data,
