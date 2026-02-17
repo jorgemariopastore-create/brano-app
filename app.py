@@ -15,7 +15,6 @@ st.markdown("""
     <style>
     .report-container { background-color: white; padding: 30px; border-radius: 15px; border: 1px solid #ccc; color: black; font-family: 'Arial', sans-serif; line-height: 1.5; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; border: none; }
-    .stButton>button:hover { background-color: #b71c1c; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -31,47 +30,36 @@ def generar_word_oficial(texto_informe, imagenes_bytes):
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
-    # Título Principal
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     run_t.bold = True
     run_t.font.size = Pt(14)
 
-    # Procesar el texto
     for linea in texto_informe.split('\n'):
         linea = linea.strip()
         if not linea: continue
-        
-        # Salto de página antes de la Conclusión
         if "IV. CONCLUSIÓN" in linea.upper():
             doc.add_page_break()
-            
         p = doc.add_paragraph()
         run = p.add_run(linea.replace('**', ''))
-        
-        # Negritas automáticas
         if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "PACIENTE", "FIRMA"]):
             run.bold = True
 
-    # Añadir Firma si existe
     if os.path.exists("firma.jpg"):
         doc.add_paragraph()
         p_firma = doc.add_paragraph()
-        p_firma.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p_firma.add_run().add_picture("firma.jpg", width=Inches(1.8))
 
-    # Anexo de Imágenes (Máximo 2 para estabilidad)
     if imagenes_bytes:
         doc.add_page_break()
-        a = doc.add_paragraph()
-        a.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        a.add_run("ANEXO DE IMÁGENES").bold = True
-        
+        doc.add_paragraph().add_run("ANEXO DE IMÁGENES").bold = True
         for img in imagenes_bytes[:2]:
             p_img = doc.add_paragraph()
             p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p_img.add_run().add_picture(io.BytesIO(img), width=Inches(4.5))
+            try:
+                p_img.add_run().add_picture(io.BytesIO(img), width=Inches(4.5))
+            except: continue
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -81,21 +69,16 @@ def generar_word_oficial(texto_informe, imagenes_bytes):
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if archivo and api_key:
-    # Cacheamos el procesamiento del PDF para evitar el botón rojo
     if "pdf_text" not in st.session_state or st.session_state.get("pdf_name") != archivo.name:
         with st.spinner("Leyendo datos estructurados..."):
             pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-            
-            # Extraer texto bloque por bloque (evita desorden de tablas)
             bloques_texto = []
             for pagina in pdf:
                 for b in pagina.get_text("blocks"):
                     bloques_texto.append(b[4])
-            
             st.session_state.pdf_text = "\n".join(bloques_texto)
             st.session_state.pdf_name = archivo.name
             
-            # Guardar solo miniaturas de imágenes para ahorrar memoria
             imgs = []
             for p in pdf:
                 for img in p.get_images():
@@ -107,26 +90,24 @@ if archivo and api_key:
     if st.button("🚀 GENERAR INFORME PROFESIONAL"):
         try:
             client = Groq(api_key=api_key)
-            
-            # PROMPT CON "MAPEO DE ETIQUETAS"
             prompt = f"""
             ERES EL DR. FRANCISCO ALBERTO PASTORE. ANALIZA ESTE ESTUDIO DE SONOSCAPE E3.
             
-            INSTRUCCIONES DE EXTRACCIÓN:
-            1. Busca los números a la derecha de estas etiquetas: DDVI, DSVI, FA, DDSIV, DDPP, DRAO, DDAI.
-            2. En el texto narrativo busca: FEy (ej. 31%), Motilidad (ej. Hipocinesia global severa), Vena Cava (ej. 15mm).
-            3. En el Doppler busca: Relación E/A y Relación E/e'.
+            INSTRUCCIONES:
+            1. Extrae DDVI, DSVI, FA, DDSIV, DDPP, DRAO, DDAI.
+            2. Busca FEy (31%), Hipocinesia global severa, Vena Cava (15mm).
+            3. Busca Relación E/A (0.95) y Relación E/e' (5.9).
 
-            FORMATO REQUERIDO:
+            FORMATO:
             DATOS DEL PACIENTE: Nombre, Peso, Altura, BSA.
-            I. EVALUACIÓN ANATÓMICA: (Valores de DDVI, DSVI, Septum, Pared, Aurícula, Vena Cava)
+            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, Aurícula, Vena Cava)
             II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad, Hipertrofia)
-            III. EVALUACIÓN HEMODINÁMICA: (Relación E/A, Relación E/e', Doppler valvular)
+            III. EVALUACIÓN HEMODINÁMICA: (Relación E/A, Relación E/e')
             IV. CONCLUSIÓN: (Diagnóstico médico final)
 
-            REGLA DE ORO: NO inventes recomendaciones. Termina en: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+            REGLA: NO inventes recomendaciones. Termina en: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             
-            TEXTO DEL PDF:
+            TEXTO:
             {st.session_state.pdf_text}
             """
             
@@ -137,8 +118,21 @@ if archivo and api_key:
             )
 
             informe_final = resp.choices[0].message.content
+            st.session_state.informe_listo = informe_final
             st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
 
-            # Preparar descarga
-            datos_word = generar_word_oficial(informe_final, st.session_state.pdf_imgs)
-            st.download_button
+        except Exception as e:
+            st.error(f"Error en la IA: {e}")
+
+    # EL BOTÓN DE DESCARGA FUERA DEL TRY PARA EVITAR SYNTAX ERROR
+    if "informe_listo" in st.session_state:
+        datos_word = generar_word_oficial(st.session_state.informe_listo, st.session_state.pdf_imgs)
+        st.download_button(
+            label="📥 Descargar Informe en Word",
+            data=datos_word,
+            file_name=f"Informe_{st.session_state.pdf_name}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+else:
+    if not api_key:
+        st.warning("⚠️ Configura la GROQ_API_KEY.")
