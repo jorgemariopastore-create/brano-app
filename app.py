@@ -4,51 +4,41 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 import os
-import re
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN DE INTERFAZ
+# 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; line-height: 1.6; }
+    .report-container { background-color: white; padding: 30px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: 'Courier New', Courier, monospace; font-size: 14px; }
     .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("❤️ Generador de Informes Médicos")
+st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore - MN 74144")
 
-archivo = st.file_uploader("📂 Subir PDF del SonoScape E3", type=["pdf"])
+# 2. CARGADOR DE ARCHIVOS
+archivo = st.file_uploader("📂 Subir PDF del ecógrafo SonoScape E3", type=["pdf"])
 
-def super_limpieza(texto):
-    # Paso 1: Juntar letras separadas (D D V I -> DDVI)
-    texto = re.sub(r'(?<= [A-Z])\s(?=[A-Z] )', '', texto)
-    # Paso 2: Eliminar saltos de línea innecesarios que rompen números
-    texto = texto.replace('\n', '  ')
-    # Paso 3: Normalizar espacios
-    texto = re.sub(r'\s+', ' ', texto)
-    return texto
-
-def generar_word(texto):
+def generar_word(texto_informe):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
-    
+
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
 
-    for linea in texto.split('\n'):
-        linea = linea.strip()
-        if not linea: continue
+    for linea in texto_informe.split('\n'):
+        if not linea.strip(): continue
         p = doc.add_paragraph()
         run = p.add_run(linea.replace('**', ''))
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS"]):
+        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
             run.bold = True
 
     if os.path.exists("firma.jpg"):
@@ -65,43 +55,43 @@ def generar_word(texto):
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if archivo and api_key:
-    if "texto_bruto" not in st.session_state or st.session_state.get("last_file") != archivo.name:
-        with st.spinner("Escaneando cada milímetro del PDF..."):
+    if "texto_mapeado" not in st.session_state or st.session_state.get("file_id") != archivo.name:
+        with st.spinner("Realizando mapeo espacial del reporte..."):
             pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-            texto_completo = ""
+            texto_mapeado = ""
             for pagina in pdf:
-                # Extraemos el texto crudo para que la IA vea las tablas
-                texto_completo += pagina.get_text("text") + "\n"
+                # LA CLAVE: "layout=True" mantiene el orden visual de las tablas
+                texto_mapeado += pagina.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) + "\n"
             
-            st.session_state.texto_bruto = super_limpieza(texto_completo)
-            st.session_state.last_file = archivo.name
+            st.session_state.texto_mapeado = texto_mapeado
+            st.session_state.file_id = archivo.name
             pdf.close()
 
     if st.button("🚀 GENERAR INFORME PROFESIONAL"):
         try:
             client = Groq(api_key=api_key)
             prompt = f"""
-            ERES EL DR. PASTORE. EL SIGUIENTE TEXTO ES UNA EXTRACCIÓN CRUDA DE UN SONOSCAPE E3. 
-            LOS DATOS ESTÁN AHÍ, PERO DESORDENADOS. TU TRABAJO ES ENCONTRARLOS.
+            ACTÚA COMO EL DR. PASTORE. USA EL SIGUIENTE TEXTO QUE MANTIENE EL FORMATO DE TABLAS ORIGINAL.
+            
+            MISION: Extraer los valores numéricos y redactar el informe.
+            
+            DATOS CLAVE QUE DEBES BUSCAR (ESTÁN AHÍ):
+            - En la tabla de medidas: DDVI (61), DSVI (46), Septum (10), Pared (11), AI (42), FA (25), FEy (31%).
+            - En el texto de motilidad: Busca 'Hipocinesia global severa'.
+            - En el Doppler: Relación E/A (0.95), E/e' (5.9), Vena Cava (15mm).
 
-            INSTRUCCIONES DE BÚSQUEDA:
-            - Busca números seguidos de 'mm' o que estén cerca de: DDVI, DSVI, DDSIV, DDPP, DDAI.
-            - Busca el porcentaje de FEy (ej. 31%) y FA.
-            - Busca en la sección Doppler: E/A, E/e' y Vena Cava.
-            - Busca términos como 'Hipocinesia', 'Hipertrofia' o 'Dilatada'.
-
-            ESTRUCTURA OBLIGATORIA:
+            ESTRUCTURA:
             DATOS DEL PACIENTE: Nombre, Peso, Altura, BSA.
-            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI, Vena Cava)
+            I. EVALUACIÓN ANATÓMICA: (Valores mm y Vena Cava)
             II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad, Hipertrofia)
-            III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e')
-            IV. CONCLUSIÓN: (Diagnóstico médico final)
+            III. EVALUACIÓN HEMODINÁMICA: (Doppler valvular)
+            IV. CONCLUSIÓN: (Diagnóstico final)
 
-            REGLA: No digas 'No disponible'. Si el valor parece ser 61 para DDVI, úsalo.
+            REGLA: NO digas 'No se encontraron datos'. Si el texto está desordenado, interprétalo profesionalmente.
             Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             
-            TEXTO PARA ANALIZAR:
-            {st.session_state.texto_bruto}
+            TEXTO ORIGINAL (PRESERVADO):
+            {st.session_state.texto_mapeado}
             """
             
             resp = client.chat.completions.create(
@@ -118,7 +108,7 @@ if archivo and api_key:
 
     if "informe_ok" in st.session_state:
         st.download_button(
-            label="📥 Descargar Word",
+            label="📥 Descargar Informe en Word",
             data=generar_word(st.session_state.informe_ok),
             file_name=f"Informe_{archivo.name}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
