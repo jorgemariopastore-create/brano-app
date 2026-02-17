@@ -1,5 +1,4 @@
-groq
 streamlit
+google-generativeai
 pymupdf
-pillow
 python-docx
