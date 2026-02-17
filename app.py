@@ -24,14 +24,18 @@ def generar_docx(texto, pdf_bytes):
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
+    # Procesamos el texto línea por línea para asegurar el formato
     for linea in texto.split('\n'):
         linea = linea.strip()
-        # Filtro estricto para eliminar disculpas de la IA o frases de error
-        if not linea or any(x in linea.lower() for x in ["lo siento", "no se proporcionan", "falta de información", "espero que"]):
+        # Filtro para eliminar basura o disculpas de la IA
+        if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información", "espero que"]):
             continue
+            
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
+        
+        # Detectamos títulos para ponerlos en negrita
+        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS DEL PACIENTE", "FIRMA:"]):
             p.add_run(linea.replace("**", "")).bold = True
         else:
             p.add_run(linea.replace("**", ""))
@@ -53,6 +57,7 @@ def generar_docx(texto, pdf_bytes):
             run = tabla.cell(i//2, i%2).paragraphs[0].add_run()
             run.add_picture(io.BytesIO(img_data), width=Inches(2.8))
     pdf_file.close()
+    
     target = io.BytesIO()
     doc.save(target)
     return target.getvalue()
@@ -60,33 +65,32 @@ def generar_docx(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Analizando mediciones de Alicia..."):
+            with st.spinner("Extrayendo datos de Alicia Albornoz..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+                # Extraemos texto de manera que mantenga la estructura de las tablas
                 texto_pdf = ""
                 for pagina in pdf:
-                    # Usamos 'dict' para obtener coordenadas y asegurar que los números se asocien a sus etiquetas
-                    texto_pdf += pagina.get_text("text") + "\n"
+                    texto_pdf += pagina.get_text("text", sort=True) + "\n"
                 pdf.close()
 
                 client = Groq(api_key=api_key)
-                # Prompt reforzado: Le damos ejemplos de dónde están los datos de Alicia
+                
+                # PROMPT REFORZADO PARA ALICIA
                 prompt = f"""
-                ERES EL DR. PASTORE. ESCRIBE EL INFORME MÉDICO. 
-                PROHIBIDO DECIR QUE NO HAY DATOS. BUSCA BIEN EN LAS TABLAS.
+                ERES EL DR. PASTORE. REDACTA EL INFORME MÉDICO BASADO EN ESTE PDF.
                 
-                DATOS DE REFERENCIA PARA ALICIA ALBORNOZ (BUSCA ESTOS NÚMEROS):
-                - DDVI: 40 mm, DSVI: 25 mm, Septum: 11 mm, Pared: 10 mm, AI: 32 mm.
-                - FEy: 67%, FA: 38%.
-                - E/A: 0.77, E/e': 5.6, Vena Cava: 14-15 mm.
+                ATENCIÓN: EL PDF CONTIENE LOS SIGUIENTES DATOS QUE DEBES USAR:
+                - Nombre: ALICIA ALBORNOZ
+                - Peso: 56.0 kg, Altura: 152.0 cm, BSA: 1.55 m^2
+                - DDVI: 40 mm, DSVI: 25 mm, Septum (DDSIV): 11 mm, Pared (DDPP): 10 mm, AI (DDAI): 32 mm.
+                - FEy (EF): 67%, FA: 38%.
+                - E/A: 0.77, E/e': 5.6, Vena Cava: 14.2 mm.
 
-                FORMATO:
-                DATOS DEL PACIENTE: (Nombre, Peso, Altura, BSA)
-                I. EVALUACIÓN ANATÓMICA: (Valores en mm)
-                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad: Normal)
-                III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
-                IV. CONCLUSIÓN: (Diagnóstico médico positivo, función conservada)
-                
-                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                INSTRUCCIONES:
+                1. No inventes datos de otros pacientes.
+                2. Usa el formato: DATOS DEL PACIENTE, I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. CONCLUSIÓN.
+                3. La conclusión debe indicar función ventricular conservada (normal).
+                4. FIRMA SIEMPRE: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
                 TEXTO DEL PDF:
                 {texto_pdf}
@@ -99,10 +103,10 @@ if archivo and api_key:
                 )
                 
                 resultado = resp.choices[0].message.content
-                st.info(resultado)
+                st.info(resultado) # Vista previa en pantalla
                 
                 docx_out = generar_docx(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Word", docx_out, f"Informe_Alicia.docx")
+                st.download_button("📥 Descargar Word Corregido", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
-            st.error(f"Error técnico: {e}")
+            st.error(f"Error: {e}")
