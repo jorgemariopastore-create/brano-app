@@ -14,9 +14,8 @@ st.subheader("Dr. Francisco Alberto Pastore")
 archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def generar_docx(texto, pdf_bytes):
+def generar_docx_limpio(texto, pdf_bytes):
     doc = Document()
-    # Estilo base Arial 11
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
@@ -29,10 +28,11 @@ def generar_docx(texto, pdf_bytes):
     # Cuerpo del informe JUSTIFICADO
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea: continue
+        if not linea or "Lo siento" in linea or "No puedo encontrar" in linea: 
+            continue # Filtramos cualquier comentario residual de la IA
+            
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Quitamos asteriscos que la IA usa para negritas y que ensucian el Word
         p.add_run(linea.replace("**", ""))
 
     # Anexo de Imágenes
@@ -61,16 +61,18 @@ def generar_docx(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Generando reporte..."):
+            with st.spinner("Generando reporte limpio..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 raw_text = "\n".join([p.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) for p in pdf])
                 pdf.close()
 
                 client = Groq(api_key=api_key)
-                # Instrucción directa: "Usa estos datos, no los busques"
+                # Prompt con restricción absoluta de comentarios
                 prompt = f"""
-                ERES EL DR. PASTORE. REDACTA EL INFORME USANDO ESTOS VALORES:
+                ERES EL DR. PASTORE. ESCRIBE ÚNICAMENTE EL INFORME MÉDICO.
+                ESTÁ PROHIBIDO AGREGAR NOTAS, DISCULPAS O COMENTARIOS AL FINAL.
                 
+                DATOS A UTILIZAR:
                 I. EVALUACIÓN ANATÓMICA: DDVI 61 mm, DSVI 46 mm, Septum 10 mm, Pared 11 mm, AI 42 mm.
                 II. FUNCIÓN VENTRICULAR: FEy 31%, FA 25%, Motilidad: Hipocinesia global severa.
                 III. EVALUACIÓN HEMODINÁMICA: E/A 0.95, E/e' 5.9, Vena Cava 15 mm.
@@ -78,8 +80,9 @@ if archivo and api_key:
                 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
-                TEXTO COMPLETO DEL PDF PARA DATOS DEL PACIENTE:
-                {raw_text}
+                REGLA DE ORO: Si el texto del PDF es confuso, NO lo menciones. Solo escribe el informe.
+                
+                TEXTO DEL PACIENTE: {raw_text}
                 """
                 
                 resp = client.chat.completions.create(
@@ -91,8 +94,8 @@ if archivo and api_key:
                 resultado = resp.choices[0].message.content
                 st.info(resultado)
                 
-                docx_out = generar_docx(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Word", docx_out, f"Informe_{archivo.name}.docx")
+                docx_out = generar_docx_limpio(resultado, archivo.getvalue())
+                st.download_button("📥 Descargar Word Sin Notas", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
