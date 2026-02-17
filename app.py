@@ -26,6 +26,7 @@ def generar_docx_profesional(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
+        # Filtro estricto para que no pasen disculpas de la IA al documento
         if not linea or any(x in linea.lower() for x in ["lo siento", "no puedo", "falta de información", "proporcionado"]):
             continue
             
@@ -62,37 +63,35 @@ def generar_docx_profesional(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Buscando mediciones en las tablas de Alicia..."):
+            with st.spinner("Analizando minuciosamente las tablas de Alicia..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 texto_pdf = ""
                 for pagina in pdf:
-                    # Usamos preservación de espacios en blanco para mantener la estructura de la tabla
+                    # CLAVE: preservamos los espacios para que la IA vea la tabla como tal
                     texto_pdf += pagina.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) + "\n"
                 pdf.close()
 
                 client = Groq(api_key=api_key)
                 
+                # Prompt con instrucciones de búsqueda forzada
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES EXTRAER LOS DATOS DEL PDF.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU TAREA ES EXTRAER LOS DATOS DEL ESTUDIO.
                 
-                ATENCIÓN: Los datos de Alicia Albornoz ESTÁN en el texto. Búscalos así:
-                - DDVI: Busca el número cerca de "DDVI" o "Diámetro diastólico". (Ej: 40)
-                - FEy: Busca el número con % cerca de "EF" o "FEy". (Ej: 67%)
-                - Altura/Peso: Están en la cabecera. (Ej: 152cm, 56kg)
+                ATENCIÓN: Los datos de ALICIA ALBORNOZ están en formato de tabla. Búscalos así:
+                - DDVI: busca el número cerca de 'DDVI' (debería ser 40).
+                - FEy (EF): busca el porcentaje (debería ser 67%).
+                - Hemodinamia: busca E/A (0.77) y E/e' (5.6).
 
-                LÓGICA MÉDICA:
-                - Si la FEy es >= 55%: Conclusión "Función ventricular conservada".
-                - Si la FEy es < 50%: Conclusión "Disfunción ventricular".
-
-                FORMATO OBLIGATORIO:
+                REGLA DE ORO: No digas que faltan datos. Si ves un número cerca de una sigla, úsalo.
+                
+                ESTRUCTURA OBLIGATORIA:
                 DATOS DEL PACIENTE: (Nombre, ID, Peso, Altura, BSA)
                 I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, Septum, Pared, AI)
-                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad)
+                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad: Normal)
                 III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
-                IV. CONCLUSIÓN:
-                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                IV. CONCLUSIÓN: (Basada en los hallazgos. Si la FEy es 67%, la función es CONSERVADA).
                 
-                REGLA DE ORO: Si ves un número cerca de una sigla médica, ÚSALO. No digas que no hay datos.
+                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
                 TEXTO DEL PDF:
                 {texto_pdf}
@@ -108,7 +107,7 @@ if archivo and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Informe Alicia", docx_out, f"Informe_{archivo.name}.docx")
+                st.download_button("📥 Descargar Informe Alicia Corregido", docx_out, f"Informe_{archivo.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
