@@ -8,100 +8,126 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. CONFIGURACIÓN
+# 1. CONFIGURACIÓN DE PÁGINA
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 
 st.markdown("""
     <style>
-    .report-container { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ccc; color: black; font-family: Arial; }
-    .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; }
+    .report-container { background-color: white; padding: 30px; border-radius: 15px; border: 1px solid #ccc; color: black; font-family: 'Arial', sans-serif; line-height: 1.5; }
+    .stButton>button { background-color: #d32f2f; color: white; width: 100%; height: 3.5em; font-weight: bold; border-radius: 10px; border: none; }
+    .stButton>button:hover { background-color: #b71c1c; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("❤️ Generador de Informes Médicos")
-st.subheader("Dr. Francisco Alberto Pastore - SonoScape E3")
+st.title("❤️ Sistema de Informes Médicos")
+st.subheader("Dr. Francisco Alberto Pastore - MN 74144")
 
-archivo = st.file_uploader("📂 Subir PDF", type=["pdf"])
+# 2. CARGADOR DE ARCHIVOS
+archivo = st.file_uploader("📂 Subir PDF del ecógrafo SonoScape E3", type=["pdf"])
 
-def crear_docx(texto, lista_imagenes):
+def generar_word_oficial(texto_informe, imagenes_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
+    # Título Principal
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     run_t.bold = True
     run_t.font.size = Pt(14)
 
-    for linea in texto.split('\n'):
+    # Procesar el texto
+    for linea in texto_informe.split('\n'):
         linea = linea.strip()
         if not linea: continue
+        
+        # Salto de página antes de la Conclusión
         if "IV. CONCLUSIÓN" in linea.upper():
             doc.add_page_break()
+            
         p = doc.add_paragraph()
         run = p.add_run(linea.replace('**', ''))
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "FIRMA"]):
+        
+        # Negritas automáticas
+        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "PACIENTE", "FIRMA"]):
             run.bold = True
 
-    # Firma JPG
+    # Añadir Firma si existe
     if os.path.exists("firma.jpg"):
         doc.add_paragraph()
-        try:
-            doc.add_paragraph().add_run().add_picture("firma.jpg", width=Inches(1.8))
-        except: pass
+        p_firma = doc.add_paragraph()
+        p_firma.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p_firma.add_run().add_picture("firma.jpg", width=Inches(1.8))
 
-    # Anexo (Máximo 4 imágenes para evitar error)
-    if lista_imagenes:
+    # Anexo de Imágenes (Máximo 2 para estabilidad)
+    if imagenes_bytes:
         doc.add_page_break()
-        doc.add_paragraph().add_run("ANEXO DE IMÁGENES").bold = True
-        tabla = doc.add_table(rows=(len(lista_imagenes) + 1) // 2, cols=2)
-        for i, img_data in enumerate(lista_imagenes[:4]):
-            row, col = i // 2, i % 2
-            try:
-                run_img = tabla.cell(row, col).paragraphs[0].add_run()
-                run_img.add_picture(io.BytesIO(img_data), width=Inches(2.5))
-            except: continue
-    
+        a = doc.add_paragraph()
+        a.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        a.add_run("ANEXO DE IMÁGENES").bold = True
+        
+        for img in imagenes_bytes[:2]:
+            p_img = doc.add_paragraph()
+            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_img.add_run().add_picture(io.BytesIO(img), width=Inches(4.5))
+
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
+# 3. LÓGICA DE EXTRACCIÓN Y IA
 api_key = st.secrets.get("GROQ_API_KEY")
 
 if archivo and api_key:
-    if "cache_texto" not in st.session_state or st.session_state.get("file_id") != archivo.name:
-        with st.spinner("Procesando PDF..."):
-            doc_pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-            st.session_state.cache_texto = "\n".join([p.get_text() for p in doc_pdf])
-            # Solo guardamos los bytes de las imágenes para ahorrar memoria
-            st.session_state.cache_imgs = [doc_pdf.extract_image(img[0])["image"] for p in doc_pdf for img in p.get_images()]
-            st.session_state.file_id = archivo.name
-            doc_pdf.close()
+    # Cacheamos el procesamiento del PDF para evitar el botón rojo
+    if "pdf_text" not in st.session_state or st.session_state.get("pdf_name") != archivo.name:
+        with st.spinner("Leyendo datos estructurados..."):
+            pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+            
+            # Extraer texto bloque por bloque (evita desorden de tablas)
+            bloques_texto = []
+            for pagina in pdf:
+                for b in pagina.get_text("blocks"):
+                    bloques_texto.append(b[4])
+            
+            st.session_state.pdf_text = "\n".join(bloques_texto)
+            st.session_state.pdf_name = archivo.name
+            
+            # Guardar solo miniaturas de imágenes para ahorrar memoria
+            imgs = []
+            for p in pdf:
+                for img in p.get_images():
+                    if len(imgs) < 2:
+                        imgs.append(pdf.extract_image(img[0])["image"])
+            st.session_state.pdf_imgs = imgs
+            pdf.close()
 
     if st.button("🚀 GENERAR INFORME PROFESIONAL"):
         try:
             client = Groq(api_key=api_key)
-            prompt = f"""
-            ERES EL DR. FRANCISCO ALBERTO PASTORE. EXTRAE LOS DATOS DEL TEXTO DEL SONOSCAPE E3.
             
-            DATOS OBLIGATORIOS (BÚSCALOS EN EL TEXTO):
-            - Cavidades: DDVI, DSVI, DDSIV, DDPP, DDAI.
-            - Función: FEy (ej. 31%), Motilidad (ej. Hipocinesia global severa), Hipertrofia (ej. excéntrica).
-            - Doppler: Vena Cava (ej. 15mm), Relación E/A, Relación E/e'.
-            - Conclusión: Copia los puntos 1 y 2 de la sección ECOCARDIOGRAMA 2D.
+            # PROMPT CON "MAPEO DE ETIQUETAS"
+            prompt = f"""
+            ERES EL DR. FRANCISCO ALBERTO PASTORE. ANALIZA ESTE ESTUDIO DE SONOSCAPE E3.
+            
+            INSTRUCCIONES DE EXTRACCIÓN:
+            1. Busca los números a la derecha de estas etiquetas: DDVI, DSVI, FA, DDSIV, DDPP, DRAO, DDAI.
+            2. En el texto narrativo busca: FEy (ej. 31%), Motilidad (ej. Hipocinesia global severa), Vena Cava (ej. 15mm).
+            3. En el Doppler busca: Relación E/A y Relación E/e'.
 
-            FORMATO:
+            FORMATO REQUERIDO:
             DATOS DEL PACIENTE: Nombre, Peso, Altura, BSA.
-            I. EVALUACIÓN ANATÓMICA: (DDVI, DSVI, DDSIV, DDPP, DDAI, Vena Cava)
+            I. EVALUACIÓN ANATÓMICA: (Valores de DDVI, DSVI, Septum, Pared, Aurícula, Vena Cava)
             II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad, Hipertrofia)
             III. EVALUACIÓN HEMODINÁMICA: (Relación E/A, Relación E/e', Doppler valvular)
-            IV. CONCLUSIÓN: (Diagnóstico final)
+            IV. CONCLUSIÓN: (Diagnóstico médico final)
 
-            REGLA: NO INVENTES RECOMENDACIONES. TERMINA EN LA FIRMA: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+            REGLA DE ORO: NO inventes recomendaciones. Termina en: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
             
-            TEXTO: {st.session_state.cache_texto}
+            TEXTO DEL PDF:
+            {st.session_state.pdf_text}
             """
             
             resp = client.chat.completions.create(
@@ -113,11 +139,6 @@ if archivo and api_key:
             informe_final = resp.choices[0].message.content
             st.markdown(f'<div class="report-container">{informe_final}</div>', unsafe_allow_html=True)
 
-            st.download_button(
-                label="📥 Descargar Word",
-                data=crear_docx(informe_final, st.session_state.cache_imgs),
-                file_name=f"Informe_{archivo.name}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-        except Exception as e:
-            st.error(f"Error: {e}")
+            # Preparar descarga
+            datos_word = generar_word_oficial(informe_final, st.session_state.pdf_imgs)
+            st.download_button
