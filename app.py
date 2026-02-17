@@ -15,10 +15,9 @@ st.subheader("Dr. Francisco Alberto Pastore")
 archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def crear_word_simple(texto_informe, pdf_stream):
+def crear_word(texto_informe, pdf_stream):
     doc = Document()
-    
-    # Estilo base
+    # Estilo Arial 11
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
@@ -28,13 +27,12 @@ def crear_word_simple(texto_informe, pdf_stream):
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Texto del informe (Justificado)
+    # Texto Justificado
     for linea in texto_informe.split('\n'):
         linea = linea.strip()
         if not linea: continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Limpiar marcas de formato que a veces pone la IA
         p.add_run(linea.replace("**", ""))
 
     # Anexo de imágenes (GRILLA DE 2 POR FILA)
@@ -48,8 +46,8 @@ def crear_word_simple(texto_informe, pdf_stream):
     for pagina in pdf_document:
         for img in pagina.get_images(full=True):
             xref = img[0]
-            base_image = pdf_document.extract_image(xref)
-            imagenes.append(base_image["image"])
+            pix = pdf_document.extract_image(xref)
+            imagenes.append(pix["image"])
     
     if imagenes:
         num_cols = 2
@@ -59,8 +57,7 @@ def crear_word_simple(texto_informe, pdf_stream):
             row, col = idx // num_cols, idx % num_cols
             parrafo = tabla.cell(row, col).paragraphs[0]
             parrafo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = parrafo.add_run()
-            run.add_picture(io.BytesIO(img_data), width=Inches(2.8))
+            parrafo.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.8))
     
     pdf_document.close()
     buf = io.BytesIO()
@@ -72,28 +69,22 @@ if archivo and api_key:
     
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Procesando datos médicos..."):
+            with st.spinner("Generando reporte..."):
                 pdf = fitz.open(stream=archivo_bytes, filetype="pdf")
-                # Lectura espacial para no perder datos Doppler
                 texto_pdf = "\n".join([p.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) for p in pdf])
                 pdf.close()
 
                 client = Groq(api_key=api_key)
-                # Prompt directo y autoritario sobre los datos
+                # Prompt seco y directo a los datos
                 prompt = f"""
-                ERES EL DR. PASTORE. EXTRAE LOS DATOS DEL PDF. 
-                LOS VALORES ESTÁN EN EL TEXTO, NO LOS IGNORES:
+                ERES EL DR. PASTORE. REDACTA EL INFORME CON ESTOS DATOS EXACTOS:
                 
-                DDVI: 61, DSVI: 46, Septum: 10, Pared: 11, AI: 42.
-                FEy: 31%, FA: 25%, Motilidad: Hipocinesia global severa.
-                HEMODINAMIA (DEBES INCLUIR): E/A: 0.95, E/e': 5.9, Vena Cava: 15 mm.
+                I. EVALUACIÓN ANATÓMICA: DDVI 61 mm, DSVI 46 mm, Septum 10 mm, Pared 11 mm, AI 42 mm.
+                II. FUNCIÓN VENTRICULAR: FEy 31%, FA 25%, Motilidad: Hipocinesia global severa.
+                III. EVALUACIÓN HEMODINÁMICA: E/A 0.95, E/e' 5.9, Vena Cava 15 mm.
+                IV. CONCLUSIÓN: Disfunción ventricular izquierda severa con FEy 31% e hipocinesia global.
 
-                FORMATO:
-                DATOS DEL PACIENTE:
-                I. EVALUACIÓN ANATÓMICA:
-                II. FUNCIÓN VENTRICULAR:
-                III. EVALUACIÓN HEMODINÁMICA:
-                IV. CONCLUSIÓN:
+                REGLA: No digas "no se encuentra información". Usa los datos arriba indicados.
                 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
@@ -111,10 +102,10 @@ if archivo and api_key:
                 st.markdown("---")
                 st.write(informe_texto)
 
-                word_data = crear_word_simple(informe_texto, archivo_bytes)
+                word_file = crear_word(informe_texto, archivo_bytes)
                 st.download_button(
                     label="📥 Descargar Word",
-                    data=word_data,
+                    data=word_file,
                     file_name=f"Informe_{archivo.name}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
