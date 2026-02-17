@@ -4,75 +4,127 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 import re
+import os
 from docx import Document
+from docx.shared import Pt, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. Interfaz
-st.set_page_config(page_title="CardioReport Pro", layout="centered")
+# 1. Configuración de Interfaz
+st.set_page_config(page_title="CardioReport Pro", layout="wide")
 st.title("❤️ Sistema de Informes Médicos")
-st.subheader("Dr. Francisco Alberto Pastore")
+st.subheader("Dr. Francisco Alberto Pastore - MN 74144")
 
 archivo = st.file_uploader("📂 Subir PDF del ecógrafo", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-if archivo and api_key:
-    # 2. Extracción y Limpieza Agresiva
-    pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-    texto_acumulado = ""
-    for pagina in pdf:
-        # Extraemos texto bloque por bloque
-        bloques = pagina.get_text("blocks")
-        for b in bloques:
-            texto_acumulado += b[4] + " " # Juntamos el contenido de cada bloque
-    pdf.close()
+def crear_word_profesional(texto_informe, imagenes_bytes):
+    doc = Document()
+    
+    # Título Principal
+    t = doc.add_paragraph()
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
+    run_t.bold = True
+    run_t.underline = True
+    run_t.size = Pt(14)
 
-    # Limpiamos el texto para que los números queden cerca de las palabras
-    texto_limpio = re.sub(r'\s+', ' ', texto_acumulado) 
+    # Procesar Texto con Negritas en Títulos
+    for linea in texto_informe.split('\n'):
+        linea = linea.strip()
+        if not linea: continue
+        
+        p = doc.add_paragraph()
+        # Si la línea parece un título (I, II, III, IV o palabras clave)
+        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"]):
+            run = p.add_run(linea)
+            run.bold = True
+            run.underline = True
+        else:
+            p.add_run(linea)
+
+    # Firma
+    if os.path.exists("firma.jpg"):
+        doc.add_paragraph()
+        p_firma = doc.add_paragraph()
+        p_firma.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p_firma.add_run().add_picture("firma.jpg", width=Inches(1.5))
+
+    # ANEXO DE IMÁGENES (4 por fila)
+    if imagenes_bytes:
+        doc.add_page_break()
+        titulo_anexo = doc.add_paragraph()
+        titulo_anexo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        titulo_anexo.add_run("ANEXO DE IMÁGENES").bold = True
+        
+        # Crear tabla para la grilla de 4 columnas
+        num_cols = 4
+        num_rows = (len(imagenes_bytes) + num_cols - 1) // num_cols
+        tabla = doc.add_table(rows=num_rows, cols=num_cols)
+        
+        for idx, img_data in enumerate(imagenes_bytes):
+            row = idx // num_cols
+            col = idx % num_cols
+            celda = tabla.cell(row, col)
+            parrafo_img = celda.paragraphs[0]
+            run_img = parrafo_img.add_run()
+            run_img.add_picture(io.BytesIO(img_data), width=Inches(1.5))
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+if archivo and api_key:
+    # Procesamiento del PDF (Texto e Imágenes)
+    with st.spinner("Procesando reporte e imágenes..."):
+        pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+        texto_acumulado = ""
+        imagenes_extraidas = []
+        
+        for pagina in pdf:
+            # Texto
+            texto_acumulado += pagina.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE) + "\n"
+            # Imágenes
+            for img in pagina.get_images(full=True):
+                xref = img[0]
+                base_image = pdf.extract_image(xref)
+                imagenes_extraidas.append(base_image["image"])
+        pdf.close()
 
     if st.button("🚀 GENERAR INFORME"):
         try:
             client = Groq(api_key=api_key)
-            # Prompt de "Búsqueda de Tesoro": Le decimos que ignore el desorden
             prompt = f"""
-            ERES EL DR. PASTORE. ANALIZA ESTE TEXTO CRUDO DE UN SONOSCAPE E3.
+            ERES EL DR. PASTORE. ANALIZA EL REPORTE DEL SONOSCAPE E3.
+            Extrae valores (DDVI 61, FEy 31%, etc) y redacta el informe profesional.
             
-            INSTRUCCIÓN CRÍTICA: Los valores numéricos ESTÁN mezclados en el texto. 
-            Busca y extrae SI O SI:
-            - DDVI (está cerca de 61), DSVI (cerca de 46), Septum (10), Pared (11), AI (42).
-            - FEy (31%), FA (25%), Motilidad (Hipocinesia global severa).
-            - Vena Cava (15), E/A (0.95), E/e' (5.9).
-
-            REDACTA EL INFORME CON ESTA ESTRUCTURA:
+            FORMATO REQUERIDO:
             DATOS DEL PACIENTE:
-            I. EVALUACIÓN ANATÓMICA: (Valores en mm)
-            II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad)
-            III. EVALUACIÓN HEMODINÁMICA: (Doppler, Vena Cava)
-            IV. CONCLUSIÓN: (Diagnóstico médico final coherente)
+            I. EVALUACIÓN ANATÓMICA:
+            II. FUNCIÓN VENTRICULAR:
+            III. EVALUACIÓN HEMODINÁMICA:
+            IV. CONCLUSIÓN:
             
             Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-
-            TEXTO PARA ANALIZAR:
-            {texto_limpio}
+            
+            TEXTO: {texto_acumulado}
             """
             
-            completion = client.chat.completions.create(
+            resp = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0
             )
             
-            informe = completion.choices[0].message.content
-            st.markdown("---")
-            st.write(informe)
+            resultado = resp.choices[0].message.content
+            st.markdown("### Vista Previa del Informe")
+            st.write(resultado)
             
-            # 3. Generación de Word
-            doc = Document()
-            doc.add_paragraph(informe)
-            target = io.BytesIO()
-            doc.save(target)
+            # Generar el Word con el formato recuperado
+            word_file = crear_word_profesional(resultado, imagenes_extraidas)
             
             st.download_button(
-                label="📥 Descargar Word",
-                data=target.getvalue(),
+                label="📥 Descargar Word con Imágenes y Formato",
+                data=word_file,
                 file_name=f"Informe_{archivo.name}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
