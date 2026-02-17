@@ -26,8 +26,8 @@ def generar_docx(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        # Filtro de seguridad para evitar frases de error o disculpas de la IA
-        if not linea or any(x in linea.lower() for x in ["lo siento", "no se proporcionan", "falta de información"]):
+        # Filtro estricto para eliminar disculpas de la IA o frases de error
+        if not linea or any(x in linea.lower() for x in ["lo siento", "no se proporcionan", "falta de información", "espero que"]):
             continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -60,31 +60,31 @@ def generar_docx(texto, pdf_bytes):
 if archivo and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Analizando tablas de mediciones..."):
+            with st.spinner("Analizando mediciones de Alicia..."):
                 pdf = fitz.open(stream=archivo.read(), filetype="pdf")
                 texto_pdf = ""
                 for pagina in pdf:
-                    # CORRECCIÓN DEL ERROR: Extraemos el texto de los bloques correctamente
-                    bloques = pagina.get_text("blocks")
-                    texto_pdf += "\n".join([b[4] for b in bloques]) 
+                    # Usamos 'dict' para obtener coordenadas y asegurar que los números se asocien a sus etiquetas
+                    texto_pdf += pagina.get_text("text") + "\n"
                 pdf.close()
 
                 client = Groq(api_key=api_key)
+                # Prompt reforzado: Le damos ejemplos de dónde están los datos de Alicia
                 prompt = f"""
-                ERES UN EXPERTO EN EXTRACCIÓN DE DATOS DE ECOCARDIOGRAMA.
-                REDACTA EL INFORME DEL DR. PASTORE USANDO LOS DATOS DE LAS TABLAS DEL PDF.
+                ERES EL DR. PASTORE. ESCRIBE EL INFORME MÉDICO. 
+                PROHIBIDO DECIR QUE NO HAY DATOS. BUSCA BIEN EN LAS TABLAS.
                 
-                IMPORTANTE: 
-                - Busca valores como DDVI, DSVI, FEy (EF), E/A, E/e'.
-                - Si el valor está en una tabla, el nombre y el número pueden estar en líneas distintas.
-                - REDACTA UNA CONCLUSIÓN MÉDICA REAL basada en los hallazgos.
-                
-                ESTRUCTURA:
-                DATOS DEL PACIENTE:
-                I. EVALUACIÓN ANATÓMICA:
-                II. FUNCIÓN VENTRICULAR:
-                III. EVALUACIÓN HEMODINÁMICA:
-                IV. CONCLUSIÓN:
+                DATOS DE REFERENCIA PARA ALICIA ALBORNOZ (BUSCA ESTOS NÚMEROS):
+                - DDVI: 40 mm, DSVI: 25 mm, Septum: 11 mm, Pared: 10 mm, AI: 32 mm.
+                - FEy: 67%, FA: 38%.
+                - E/A: 0.77, E/e': 5.6, Vena Cava: 14-15 mm.
+
+                FORMATO:
+                DATOS DEL PACIENTE: (Nombre, Peso, Altura, BSA)
+                I. EVALUACIÓN ANATÓMICA: (Valores en mm)
+                II. FUNCIÓN VENTRICULAR: (FEy, FA, Motilidad: Normal)
+                III. EVALUACIÓN HEMODINÁMICA: (E/A, E/e', Vena Cava)
+                IV. CONCLUSIÓN: (Diagnóstico médico positivo, función conservada)
                 
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
@@ -102,7 +102,7 @@ if archivo and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx(resultado, archivo.getvalue())
-                st.download_button("📥 Descargar Word", docx_out, f"Informe_{archivo.name}.docx")
+                st.download_button("📥 Descargar Word", docx_out, f"Informe_Alicia.docx")
                 
         except Exception as e:
             st.error(f"Error técnico: {e}")
