@@ -17,20 +17,27 @@ archivo_datos = st.file_uploader("1. Reporte de Datos (TXT o DOCX)", type=["txt"
 archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def extraer_valor_universal(texto, etiquetas):
+def extraer_valor_logico(texto, etiquetas, es_porcentaje=False):
     """
-    Busca entre varias etiquetas posibles y extrae el valor numérico 
-    más cercano al texto encontrado.
+    Busca valores numéricos y descarta los que parecen fechas o son imposibles.
     """
     for etiqueta in etiquetas:
-        # Busca la etiqueta y captura el primer número que aparezca después de 'value =' 
-        # o simplemente después de la etiqueta en un rango de 50 caracteres
-        patron = re.compile(rf"{re.escape(etiqueta)}.*?(?:value\s*=\s*)?([\d\.,]+)", re.DOTALL | re.IGNORECASE)
-        match = patron.search(texto)
-        if match:
-            valor = match.group(1).replace(',', '.')
-            if valor and valor != "******" and not valor.startswith('.'):
-                return valor
+        # Busca la etiqueta y el número más cercano que tenga sentido médico
+        patron = re.compile(rf"{re.escape(etiqueta)}.*?(?:value\s*=\s*|[:\s])([\d\.,]+)", re.DOTALL | re.IGNORECASE)
+        matches = patron.finditer(texto)
+        for match in matches:
+            valor_raw = match.group(1).replace(',', '.')
+            try:
+                valor_float = float(valor_raw)
+                # Filtro de seguridad:
+                if es_porcentaje:
+                    if 10 < valor_float < 95: # Una FEy lógica
+                        return str(valor_float)
+                else:
+                    if 0.5 < valor_float < 80: # Un diámetro lógico en mm o cm
+                        return str(valor_float)
+            except:
+                continue
     return "No evaluado"
 
 def generar_docx_profesional(texto, pdf_bytes):
@@ -93,39 +100,31 @@ if archivo_datos and archivo_pdf and api_key:
                 else:
                     texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
 
-                # BÚSQUEDA MULTI-ETIQUETA (Para que sirva para cualquier paciente)
-                ddvi = extraer_valor_universal(texto_crudo, ["LVID(d)", "LVIDd", "DDVI"])
-                dsvi = extraer_valor_universal(texto_crudo, ["LVID(s)", "LVIDs", "DSVI"])
-                septum = extraer_valor_universal(texto_crudo, ["IVS(d)", "IVSd", "Septum"])
-                pared = extraer_valor_universal(texto_crudo, ["LVPW(d)", "LVPWd", "Pared"])
-                fey = extraer_valor_universal(texto_crudo, ["EF(Teich)", "EF", "FEy"])
-                fa = extraer_valor_universal(texto_crudo, ["FS(Teich)", "FS", "FA"])
+                # BÚSQUEDA ROBUSTA (Evita capturar fechas como valores)
+                ddvi = extraer_valor_logico(texto_crudo, ["LVID(d)", "LVIDd", "DDVI"])
+                dsvi = extraer_valor_logico(texto_crudo, ["LVID(s)", "LVIDs", "DSVI"])
+                septum = extraer_valor_logico(texto_crudo, ["IVS(d)", "IVSd", "Septum"])
+                pared = extraer_valor_logico(texto_crudo, ["LVPW(d)", "LVPWd", "Pared"])
+                fey = extraer_valor_logico(texto_crudo, ["EF(Teich)", "EF", "FEy"], es_porcentaje=True)
+                fa = extraer_valor_logico(texto_crudo, ["FS(Teich)", "FS", "FA"], es_porcentaje=True)
 
                 client = Groq(api_key=api_key)
-                # Prompt mejorado para forzar a la IA a no dudar
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE.
-                Tu tarea es redactar el informe médico basado en los datos técnicos.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. 
+                Usa estos valores médicos confirmados para redactar el informe:
                 
-                VALORES EXTRAÍDOS:
-                - DDVI: {ddvi} mm
-                - DSVI: {dsvi} mm
-                - Septum: {septum} mm
-                - Pared: {pared} mm
-                - FEy: {fey} %
-                - FA: {fa} %
+                DDVI: {ddvi} mm, DSVI: {dsvi} mm, Septum: {septum} mm, Pared: {pared} mm.
+                FEy: {fey} %, FA: {fa} %.
 
-                DATOS PACIENTE: Busca el nombre y datos en:
-                {texto_crudo[:2000]}
+                TEXTO COMPLETO PARA NOMBRE Y ANTECEDENTES:
+                {texto_crudo[:10000]}
 
-                ESTRUCTURA OBLIGATORIA:
+                FORMATO:
                 DATOS DEL PACIENTE:
-                I. EVALUACIÓN ANATÓMICA: (Menciona los diámetros y espesores arriba indicados)
-                II. FUNCIÓN VENTRICULAR: (Menciona la FEy y FA)
-                III. EVALUACIÓN HEMODINÁMICA: (Si no hay datos, pon 'Sin particularidades')
-                IV. CONCLUSIÓN: (Si FEy >= 55%: 'Función ventricular izquierda conservada')
-                
-                REGLAS: NO uses frases como 'No se proporcionan detalles'. Si tienes los números arriba, úsalos.
+                I. EVALUACIÓN ANATÓMICA
+                II. FUNCIÓN VENTRICULAR
+                III. EVALUACIÓN HEMODINÁMICA
+                IV. CONCLUSIÓN (Si FEy >= 55%: Función conservada)
                 """
                 
                 resp = client.chat.completions.create(
@@ -138,7 +137,7 @@ if archivo_datos and archivo_pdf and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Informe Word", docx_out, f"Informe_{archivo_datos.name}.docx")
+                st.download_button("📥 Descargar Informe", docx_out, f"Informe_{archivo_datos.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
