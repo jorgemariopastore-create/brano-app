@@ -6,6 +6,16 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# 1. Función de IA aislada para evitar cortes de sintaxis
+def pedir_ia(key, p, f, e, d, s, a):
+    try:
+        client = Groq(api_key=key)
+        px = f"Redacta informe médico: I. ANATOMÍA: Raíz aórtica ({a}mm) y aurícula izquierda normales. Cavidades con espesores conservados (SIV {s}mm). II. FUNCIÓN: Sistólica conservada. FEy {f}%. III. VÁLVULAS: Ecoestructura normal. IV. CONCLUSIÓN: Normal. Sin introducciones."
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
+        return res.choices[0].message.content
+    except Exception as e:
+        return f"Error IA: {str(e)}"
+
 def motor(t):
     d = {"pac": "ALBORNOZ ALICIA", "ed": "74", "fy": "68", "dv": "40", "dr": "32", "ai": "32", "si": "11"}
     if t:
@@ -22,8 +32,7 @@ def get_imgs(pdf_b):
         with fitz.open(stream=pdf_b, filetype="pdf") as doc:
             for p in doc:
                 for i in p.get_images():
-                    img_data = doc.extract_image(i[0])["image"]
-                    out.append(img_data)
+                    out.append(doc.extract_image(i[0])["image"])
     except: pass
     return out
 
@@ -34,17 +43,13 @@ def docx(rep, dt, imgs):
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = h.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     r.bold, r.font.size = True, Pt(12)
-    
     b1 = doc.add_table(rows=2, cols=3); b1.style = 'Table Grid'
     ls = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", "FECHA: 18/02/2026", "PESO: 56 kg", "ALTURA: 152 cm", "BSA: 1.54 m²"]
     for i, x in enumerate(ls): b1.cell(i//3, i%3).text = x
-    
     doc.add_paragraph("\n")
-    doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     b2 = doc.add_table(rows=5, cols=2); b2.style = 'Table Grid'
     ms = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
     for i, (n, v) in enumerate(ms): b2.cell(i,0).text, b2.cell(i,1).text = n, v
-    
     doc.add_paragraph("\n")
     for l in rep.split('\n'):
         l = l.strip().replace('*', '').replace('"', '')
@@ -52,39 +57,19 @@ def docx(rep, dt, imgs):
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if any(l.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]): p.add_run(l).bold = True
         else: p.add_run(l)
-    
     doc.add_paragraph("\n")
     f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________").bold = True
     f.add_run("\nDr. FRANCISCO ALBERTO PASTORE").bold = True
     f.add_run("\nMédico Cardiólogo - MN 74144").bold = True
-    
     if imgs:
         doc.add_page_break()
         ti = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
         for i, m in enumerate(imgs):
             c = ti.cell(i // 2, i % 2)
-            par = c.paragraphs[0]
-            par.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            par.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
+            c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            c.paragraphs[0].add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-st.set_page_config(page_title="CardioPro 38.6", layout="wide")
-st.title("❤️ CardioReport Pro v38.6")
-c1, c2 = st.columns(2)
-u1, u2 = c1.file_uploader("1. TXT", type=["txt", "html"]), c2.file_uploader("2. PDF", type=["pdf"])
-ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
-
-if u1 and u2 and ak:
-    dt = motor(u1.read().decode("latin-1", errors="ignore"))
-    st.subheader("🔍 VALIDACIÓN DE DATOS")
-    v1, v2, v3 = st.columns(3)
-    p_val = v1.text_input("Paciente", dt["pac"])
-    f_val = v1.text_input("FEy %", dt["fy"])
-    e_val = v2.text_input("Edad", dt["ed"])
-    d_val = v2.text_input("DDVI mm", dt["dv"])
-    s_val = v3.text_input("SIV mm", dt["si"])
-    a_val = v3.text_input("DRAO mm", dt["dr"])
-
-    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
-        cl = Groq(api_
+st.set_page_config(page_title="CardioPro 38.7", layout="wide")
+st.title("❤️ CardioReport Pro v38.7")
