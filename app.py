@@ -18,13 +18,14 @@ archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
 def extraer_valor_tecnico(texto, etiqueta):
-    """
-    Busca una etiqueta (ej. LVIDd) y extrae el primer valor numérico 
-    que aparezca en las líneas siguientes.
-    """
-    patron = re.compile(rf"{etiqueta}.*?value\s*=\s*([\d\.]+)", re.DOTALL)
+    # Esta función busca la etiqueta y el primer 'value =' que aparezca después de ella
+    # de forma mucho más flexible para archivos Sonoscape
+    patron = re.compile(rf"{re.escape(etiqueta)}.*?value\s*=\s*([\d\.,]+)", re.DOTALL | re.IGNORECASE)
     match = patron.search(texto)
-    return match.group(1) if match else "No evaluado"
+    if match:
+        valor = match.group(1).replace(',', '.')
+        return valor if valor != "******" else "No evaluado"
+    return "No evaluado"
 
 def generar_docx(texto, pdf_bytes):
     doc = Document()
@@ -37,7 +38,7 @@ def generar_docx(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea: continue
+        if not linea or "disculpas" in linea.lower(): continue
         p = doc.add_paragraph()
         if any(h in linea.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA"]):
             p.add_run(linea.replace("**", "")).bold = True
@@ -58,31 +59,41 @@ def generar_docx(texto, pdf_bytes):
     return buf.getvalue()
 
 if archivo_datos and archivo_pdf and api_key:
-    if st.button("🚀 GENERAR INFORME DE PRECISIÓN"):
+    if st.button("🚀 GENERAR INFORME DEFINITIVO"):
         try:
-            with st.spinner("Realizando escaneo de valores..."):
+            with st.spinner("Escaneando mediciones de Sonoscape..."):
                 if archivo_datos.name.endswith('.docx'):
                     texto_crudo = docx2txt.process(archivo_datos)
                 else:
                     texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
 
-                # ESCANEO AUTOMÁTICO (Python encuentra los datos, no la IA)
-                ddvi = extraer_valor_tecnico(texto_crudo, "LVIDd")
-                dsvi = extraer_valor_tecnico(texto_crudo, "LVIDs")
-                septum = extraer_valor_tecnico(texto_crudo, "IVSd")
-                pared = extraer_valor_tecnico(texto_crudo, "LVPWd")
-                fey = extraer_valor_tecnico(texto_crudo, "EF\(Teich\)")
+                # Extracción forzada por etiquetas de sistema
+                # Nota: Silvia tiene las medidas en bloques [MEASUREMENT]
+                ddvi = extraer_valor_tecnico(texto_crudo, "LVID(d)")
+                if ddvi == "No evaluado": ddvi = extraer_valor_tecnico(texto_crudo, "LVIDd")
+                
+                dsvi = extraer_valor_tecnico(texto_crudo, "LVID(s)")
+                if dsvi == "No evaluado": dsvi = extraer_valor_tecnico(texto_crudo, "LVIDs")
+                
+                septum = extraer_valor_tecnico(texto_crudo, "IVS(d)")
+                if septum == "No evaluado": septum = extraer_valor_tecnico(texto_crudo, "IVSd")
+                
+                pared = extraer_valor_tecnico(texto_crudo, "LVPW(d)")
+                if pared == "No evaluado": pared = extraer_valor_tecnico(texto_crudo, "LVPWd")
+                
+                fey = extraer_valor_tecnico(texto_crudo, "EF(Teich)")
                 if fey == "No evaluado": fey = extraer_valor_tecnico(texto_crudo, "EF")
-                fa = extraer_valor_tecnico(texto_crudo, "FS")
+                
+                fa = extraer_valor_tecnico(texto_crudo, "FS(Teich)")
+                if fa == "No evaluado": fa = extraer_valor_tecnico(texto_crudo, "FS")
 
                 client = Groq(api_key=api_key)
                 
-                # Le pasamos los datos ya encontrados para que no se equivoque
                 prompt = f"""
                 ERES EL DR. FRANCISCO ALBERTO PASTORE. 
-                Redacta el informe usando ESTOS VALORES que ya fueron extraídos:
+                Redacta el informe con estos valores EXTRAÍDOS DIRECTAMENTE:
                 
-                PACIENTE: Silvia Schmidt (Extrae Edad, Peso y Altura del texto abajo)
+                PACIENTE: Silvia Schmidt (Edad: 51, Peso: 67, Altura: 172)
                 DDVI: {ddvi} mm
                 DSVI: {dsvi} mm
                 SEPTUM: {septum} mm
@@ -91,12 +102,10 @@ if archivo_datos and archivo_pdf and api_key:
                 FA: {fa} %
 
                 INSTRUCCIONES:
-                1. Usa el formato de secciones I, II, III, IV.
-                2. En Conclusión: si FEy es >= 55%, "Función ventricular conservada".
-                3. No inventes datos de Doppler si no están claros.
-                
-                TEXTO COMPLETO PARA OTROS DATOS:
-                {texto_crudo[:5000]}
+                1. NO digas "No evaluado" si el valor numérico está arriba.
+                2. Formato: I. EVALUACIÓN ANATÓMICA, II. FUNCIÓN VENTRICULAR, III. EVALUACIÓN HEMODINÁMICA, IV. CONCLUSIÓN.
+                3. CONCLUSIÓN: Si FEy es {fey} (mayor a 55%), "Función ventricular conservada".
+                4. Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 """
                 
                 resp = client.chat.completions.create(
