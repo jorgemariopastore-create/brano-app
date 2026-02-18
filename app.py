@@ -63,8 +63,8 @@ def docx(rep, dt, imgs):
             par.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-st.set_page_config(page_title="CardioPro 38.5", layout="wide")
-st.title("❤️ CardioReport Pro v38.5")
+st.set_page_config(page_title="CardioPro 38.6", layout="wide")
+st.title("❤️ CardioReport Pro v38.6")
 c1, c2 = st.columns(2)
 u1, u2 = c1.file_uploader("1. TXT", type=["txt", "html"]), c2.file_uploader("2. PDF", type=["pdf"])
 ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
@@ -73,13 +73,30 @@ if u1 and u2 and ak:
     dt = motor(u1.read().decode("latin-1", errors="ignore"))
     st.subheader("🔍 VALIDACIÓN")
     v1, v2, v3 = st.columns(3)
-    p, f, e = v1.text_input("Pac", dt["pac"]), v1.text_input("FEy", dt["fy"]), v2.text_input("Ed", dt["ed"])
-    d, s, a = v2.text_input("DDVI", dt["dv"]), v3.text_input("SIV", dt["si"]), v3.text_input("DRAO", dt["dr"])
+    p = v1.text_input("Pac", dt["pac"])
+    f = v1.text_input("FEy", dt["fy"])
+    e = v2.text_input("Ed", dt["ed"])
+    d = v2.text_input("DDVI", dt["dv"])
+    s = v3.text_input("SIV", dt["si"])
+    a = v3.text_input("DRAO", dt["dr"])
+    
     if st.button("🚀 GENERAR"):
         cl = Groq(api_key=ak)
         px = f"Exclusivo: I. ANATOMÍA: Raíz aórtica ({a}mm) y aurícula izquierda normales. Cavidades con espesores conservados (Septum {s}mm). II. FUNCIÓN: Sistólica conservada. FEy {f}%. III. VÁLVULAS: Ecoestructura normal. IV. CONCLUSIÓN: Normal."
         rs = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
         txt = rs.choices[0].message.content
         st.info(txt)
+        
+        # Diccionario construido línea por línea para evitar SyntaxError al pegar
+        fd = {}
+        fd["pac"] = p
+        fd["ed"] = e
+        fd["fy"] = f
+        fd["dv"] = d
+        fd["dr"] = a
+        fd["si"] = s
+        fd["ai"] = dt["ai"]
+        
         im_list = get_imgs(u2.getvalue())
-        w = docx(txt, {"pac":p,"ed":e,"
+        w = docx(txt, fd, im_list)
+        st.download_button("📥 DESCARGAR", w, f"{p}.docx")
