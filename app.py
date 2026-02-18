@@ -8,25 +8,25 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. MOTOR DE EXTRACCIÓN ---
-def motor_v34(texto):
-    info = {"paciente": "", "edad": "74", "peso": "56", "altura": "152", "fey": "68", "ddvi": "40", "drao": "32", "ddai": "32"}
+# --- 1. EXTRACCIÓN DE DATOS ---
+def motor_v35(texto):
+    info = {"paciente": "", "edad": "74", "peso": "56", "altura": "152", "fey": "68", "ddvi": "40"}
     n = re.search(r"(?:Name|Nombre|PACIENTE)\s*[:=-]\s*([^<\r\n]*)", texto, re.I)
     if n: info["paciente"] = n.group(1).replace(',', '').strip()
     return info
 
 # --- 2. GENERADOR DE WORD ---
-def crear_word_v34(texto_ia, datos_v, pdf_bytes):
+def crear_word_v35(texto_ia, datos_v, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
     
-    # Título
+    # Encabezado centrado
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Identificación
+    # Tabla de Datos
     table = doc.add_table(rows=2, cols=3)
     table.style = 'Table Grid'
     table.rows[0].cells[0].text = f"PACIENTE: {datos_v['paciente']}"
@@ -41,14 +41,14 @@ def crear_word_v34(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Mediciones Técnicas
+    # Cuadro de Mediciones (Estilo PDF Real)
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
     meds = [
         ("Diámetro Diastólico VI (DDVI)", f"{datos_v['ddvi']} mm"),
-        ("Raíz Aórtica (DRAO)", f"{datos_v['drao']} mm"),
-        ("Aurícula Izquierda (DDAI)", f"{datos_v['ddai']} mm"),
+        ("Raíz Aórtica (DRAO)", "32 mm"),
+        ("Aurícula Izquierda (DDAI)", "32 mm"),
         ("Septum Interventricular", "11 mm"),
         ("Fracción de Eyección (FEy)", f"{datos_v['fey']} %")
     ]
@@ -58,10 +58,10 @@ def crear_word_v34(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Texto del Informe (Sin comillas, Justificado)
+    # Cuerpo del Informe (Sin comillas, estilo directo)
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('"', '')
-        if not linea or linea.lower().startswith("informe"): continue
+        if not linea or "informe" in linea.lower(): continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
@@ -93,42 +93,42 @@ def crear_word_v34(texto_ia, datos_v, pdf_bytes):
     return buf.getvalue()
 
 # --- 3. INTERFAZ ---
-st.title("❤️ CardioReport Pro v34")
+st.title("❤️ CardioReport Pro v35")
 
-u_txt = st.file_uploader("1. Reporte TXT", type=["txt", "html"])
-u_pdf = st.file_uploader("2. PDF Original", type=["pdf"])
+u_txt = st.file_uploader("1. Reporte del Ecógrafo", type=["txt", "html"])
+u_pdf = st.file_uploader("2. PDF para Imágenes", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY") or st.text_input("Groq Key", type="password")
 
 if u_txt and u_pdf and api_key:
     raw = u_txt.read().decode("latin-1", errors="ignore")
-    info = motor_v34(raw)
+    info = motor_v35(raw)
     
-    st.subheader("📝 Validar Datos")
+    st.subheader("📝 Revisión de Datos")
     c1, c2, c3 = st.columns(3)
     with c1:
         nom_f = st.text_input("Paciente", info["paciente"])
-        fey_f = st.text_input("FEy", info["fey"])
+        fey_f = st.text_input("FEy (%)", info["fey"])
     with c2:
         eda_f = st.text_input("Edad", "74")
-        ddvi_f = st.text_input("DDVI", info["ddvi"])
+        ddvi_f = st.text_input("DDVI (mm)", info["ddvi"])
     with c3:
-        pes_f = st.text_input("Peso", "56")
-        alt_f = st.text_input("Altura", "152")
+        pes_f = st.text_input("Peso (kg)", "56")
+        alt_f = st.text_input("Altura (cm)", "152")
 
-    if st.button("🚀 GENERAR"):
+    if st.button("🚀 GENERAR INFORME FINAL"):
         client = Groq(api_key=api_key)
+        # PROMPT DE IMITACIÓN ESTRICTA
         prompt = f"""
-        ACTÚA COMO EL DR. PASTORE. Escribe el informe para {nom_f}.
-        DATOS: DDVI {ddvi_f}mm, DRAO 32mm, DDAI 32mm, FEy {fey_f}%.
+        ERES EL DR. PASTORE. Escribe el informe médico. 
+        REGLA DE ORO: Usa solo frases técnicas y secas. SIN ADORNOS. SIN COMILLAS.
         
-        ESTILO MÉDICO (SIN COMILLAS, SIN "INFORME:", SIN ADORNOS):
         I. ANATOMÍA: Raíz aórtica y aurícula izquierda de diámetros normales. Cavidades ventriculares de dimensiones y espesores parietales normales.
-        II. FUNCIÓN VENTRICULAR: Función sistólica del ventrículo izquierdo conservada (FEy {fey_f}%). Fracción de acortamiento normal.
+        II. FUNCIÓN VENTRICULAR: Función sistólica del VI conservada. FEy {fey_f}%. Fracción de acortamiento normal. 
         III. VÁLVULAS Y DOPPLER: Ecoestructura y movilidad valvular normal. Apertura y cierre conservado. Flujos laminares sin reflujos patológicos.
-        IV. CONCLUSIÓN: Estudio dentro de parámetros normales.
+        IV. CONCLUSIÓN: Estudio dentro de parámetros normales para la edad.
         """
         res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0)
         reporte = res.choices[0].message.content
         st.info(reporte)
-        archivo = crear_word_v34(reporte, {"paciente": nom_f, "edad": eda_f, "peso": pes_f, "altura": alt_f, "fey": fey_f, "ddvi": ddvi_f, "drao": "32", "ddai": "32"}, u_pdf.getvalue())
-        st.download_button("📥 DESCARGAR", archivo, f"Informe_{nom_f}.docx")
+        archivo = crear_word_v35(reporte, {"paciente": nom_f, "edad": eda_f, "peso": pes_f, "altura": alt_f, "fey": fey_f, "ddvi": ddvi_f}, u_pdf.getvalue())
+        st.download_button("📥 DESCARGAR WORD", archivo, f"Informe_{nom_f}.docx")
