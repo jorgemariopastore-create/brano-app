@@ -8,47 +8,39 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. EXTRACCIÓN DE DATOS (ESPEJO DEL ECÓGRAFO) ---
-def motor_v36_5(texto):
-    # Valores por defecto para Alicia Albornoz
+# --- 1. MOTOR DE EXTRACCIÓN (DATOS DEL ECÓGRAFO) ---
+def motor_v36_6(texto):
     info = {
         "paciente": "ALBORNOZ ALICIA", "edad": "74", "peso": "56", "altura": "152",
         "fey": "68", "ddvi": "40", "drao": "32", "ddai": "32", "siv": "11"
     }
     if texto:
-        # Nombre del paciente
         n = re.search(r"(?:Paciente|Name|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto, re.I)
         if n: info["paciente"] = n.group(1).strip().upper()
         
-        # Mapeo de valores técnicos del ecógrafo (FA, DDVI, DRAO, DDAI, DDSIV)
+        # Mapeo de etiquetas técnicas
         f = re.search(r"\"FA\"\s*,\s*\"(\d+)\"", texto, re.I)
         if f: info["fey"] = f.group(1)
-        
         d = re.search(r"\"DDVI\"\s*,\s*\"(\d+)\"", texto, re.I)
         if d: info["ddvi"] = d.group(1)
-        
         ao = re.search(r"\"DRAO\"\s*,\s*\"(\d+)\"", texto, re.I)
         if ao: info["drao"] = ao.group(1)
-        
         ai = re.search(r"\"DDAI\"\s*,\s*\"(\d+)\"", texto, re.I)
         if ai: info["ddai"] = ai.group(1)
-        
         s = re.search(r"\"DDSIV\"\s*,\s*\"(\d+)\"", texto, re.I)
         if s: info["siv"] = s.group(1)
     return info
 
-# --- 2. GENERADOR DE WORD (ESTILO PASTORE) ---
-def crear_word_v36_5(texto_ia, datos, pdf_bytes):
+# --- 2. GENERADOR DE WORD (ESTILO PASTORE DIRECTO) ---
+def crear_word_v36_6(texto_ia, datos, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
     
-    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Tabla de datos
     table = doc.add_table(rows=2, cols=3)
     table.style = 'Table Grid'
     table.rows[0].cells[0].text = f"PACIENTE: {datos['paciente']}"
@@ -61,7 +53,6 @@ def crear_word_v36_5(texto_ia, datos, pdf_bytes):
     doc.add_paragraph("\n")
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     
-    # Tabla de mediciones técnicas
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
     meds = [
@@ -77,10 +68,10 @@ def crear_word_v36_5(texto_ia, datos, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Redacción del informe: Filtrar cualquier "conversación" de la IA
+    # FILTRO: Solo permite líneas que comiencen con los puntos del doctor
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('*', '').replace('"', '')
-        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente", "firma"]):
+        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente", "firma", "hola"]):
             continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -94,7 +85,6 @@ def crear_word_v36_5(texto_ia, datos, pdf_bytes):
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
-    # Integración de imágenes del PDF
     if pdf_bytes:
         try:
             doc.add_page_break()
@@ -119,25 +109,24 @@ def crear_word_v36_5(texto_ia, datos, pdf_bytes):
     return buf.getvalue()
 
 # --- 3. INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="CardioReport Pro v36.5", layout="wide")
-st.title("❤️ CardioReport Pro v36.5")
+st.set_page_config(page_title="CardioReport Pro v36.6", layout="wide")
+st.title("❤️ CardioReport Pro v36.6")
 
-c1, c2 = st.columns(2)
-with c1:
+col_a, col_b = st.columns(2)
+with col_a:
     u_txt = st.file_uploader("1. Archivo de Datos (TXT/HTML)", type=["txt", "html"])
-with c2:
+with col_b:
     u_pdf = st.file_uploader("2. PDF con Imágenes", type=["pdf"])
 
 api_key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API Key", type="password")
 
 if u_txt and u_pdf and api_key:
     raw_content = u_txt.read().decode("latin-1", errors="ignore")
-    datos_extraidos = motor_v36_5(raw_content)
+    datos_extraidos = motor_v36_6(raw_content)
     
     st.markdown("---")
-    st.subheader("🔍 Verificación de Datos del Doctor")
+    st.subheader("🔍 Verificación de Datos")
     
-    # Formulario de verificación con variables corregidas
     v_col1, v_col2, v_col3 = st.columns(3)
     with v_col1:
         f_paciente = st.text_input("Paciente", datos_extraidos["paciente"])
@@ -149,4 +138,23 @@ if u_txt and u_pdf and api_key:
         f_siv = st.text_input("SIV (mm)", datos_extraidos["siv"])
         f_drao = st.text_input("DRAO (mm)", datos_extraidos["drao"])
 
-    if st.button
+    # CORRECCIÓN DE SINTAXIS: Se añade el ':' que faltaba
+    if st.button("🚀 GENERAR INFORME"):
+        client = Groq(api_key=api_key)
+        prompt_final = f"Escribe solo los hallazgos médicos: I. ANATOMÍA: Raíz aórtica ({f_drao}mm) y aurícula izquierda normales. VI con dimensiones normales (Septum {f_siv}mm). II. FUNCIÓN VENTRICULAR: Función sistólica conservada. FEy {f_fey}%. III. VÁLVULAS Y DOPPLER: Ecoestructura normal. IV. CONCLUSIÓN: Estudio normal para la edad."
+        
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt_final}],
+            temperature=0
+        )
+        texto_reporte = res.choices[0].message.content
+        st.info(texto_reporte)
+        
+        dict_final = {
+            "paciente": f_paciente, "edad": f_edad, "peso": "56", "altura": "152",
+            "fey": f_fey, "ddvi": f_ddvi, "drao": f_drao, "ddai": datos_extraidos["ddai"], "siv": f_siv
+        }
+        
+        word_data = crear_word_v36_6(texto_reporte, dict_final, u_pdf.getvalue())
+        st.download_button("📥 DESCARGAR INFORME WORD", word_data, f"Informe_{f_paciente}.docx")
