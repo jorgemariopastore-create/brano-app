@@ -7,30 +7,17 @@ import docx2txt
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from bs4 import BeautifulSoup
 
+# 1. Configuración de la interfaz
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-col1, col2 = st.columns(2)
-with col1:
-    archivo_datos = st.file_uploader("1. Reporte de Datos (TXT, DOCX o HTML)", type=["txt", "docx", "html"])
-with col2:
-    archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
-
+archivo_datos = st.file_uploader("1. Reporte de Datos (TXT o DOCX)", type=["txt", "docx"])
+archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def procesar_archivo_datos(archivo):
-    if archivo.name.endswith('.docx'):
-        return docx2txt.process(archivo)
-    elif archivo.name.endswith('.html'):
-        soup = BeautifulSoup(archivo.read().decode("latin-1", errors="ignore"), "html.parser")
-        return soup.get_text(separator=' ')
-    else:
-        return archivo.read().decode("latin-1", errors="ignore")
-
-def generar_docx_profesional(texto, pdf_bytes):
+def generar_docx(texto, pdf_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
@@ -42,11 +29,9 @@ def generar_docx_profesional(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        # Filtro de seguridad para eliminar cualquier residuo de comentarios de la IA
-        if not linea or any(x in linea.lower() for x in ["importante tener en cuenta", "nota:", "descargo", "interpretación", "proporcionado"]):
-            continue
+        if not linea or any(x in linea.lower() for x in ["nota:", "importante", "descargo"]): continue
         p = doc.add_paragraph()
-        if any(h in linea.upper() for h in ["DATOS DEL PACIENTE", "I.", "II.", "III.", "IV.", "CONCLUSIÓN", "FIRMA"]):
+        if any(h in linea.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA"]):
             p.add_run(linea.replace("**", "")).bold = True
         else:
             p.add_run(linea.replace("**", ""))
@@ -65,39 +50,45 @@ def generar_docx_profesional(texto, pdf_bytes):
     return buf.getvalue()
 
 if archivo_datos and archivo_pdf and api_key:
-    if st.button("🚀 GENERAR INFORME ESTRUCTURADO"):
+    if st.button("🚀 GENERAR INFORME SIN ERRORES"):
         try:
-            with st.spinner("Generando informe médico oficial..."):
-                texto_crudo = procesar_archivo_datos(archivo_datos)
-                
+            with st.spinner("Escaneando parámetros técnicos de Silvia Schmidt..."):
+                if archivo_datos.name.endswith('.docx'):
+                    texto_crudo = docx2txt.process(archivo_datos)
+                else:
+                    texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
+
                 client = Groq(api_key=api_key)
                 
-                # PROMPT REDISEÑADO: MODO TRANSCRIPCIÓN MÉDICA ESTRICTA
+                # PROMPT DE EXTRACCIÓN AGRESIVA
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU ÚNICA FUNCIÓN ES TRANSCRIPCIÓN MÉDICA.
+                ERES EL DR. PASTORE. USA ESTA GUÍA DE TRADUCCIÓN PARA EL ARCHIVO TXT:
+                - LVIDd o LVID(d) es el DDVI.
+                - LVIDs o LVID(s) es el DSVI.
+                - IVSd es el Septum.
+                - LVPWd es la Pared Posterior.
+                - EF o EF(Teich) es la FEy.
+                - FS es la FA.
+                - E/A y E/E' están en la sección Doppler.
+
+                TAREAS:
+                1. Extrae Nombre, Edad, Peso, Altura del inicio ([PATINET INFO]).
+                2. Busca los valores numéricos de las siglas mencionadas arriba. 
+                3. Si el valor es '******', di 'No evaluado'. Si hay un número, ÚSALO.
+                4. CONCLUSIÓN: Si FEy >= 55%, "Función ventricular conservada".
+
+                PROHIBIDO: No digas "No disponible" si el número está en el texto. No pongas notas finales.
                 
-                INSTRUCCIONES DE FORMATO:
-                1. NO incluyas introducciones ni despedidas.
-                2. NO incluyas notas aclaratorias, advertencias ni comentarios sobre la calidad de los datos.
-                3. Usa EXCLUSIVAMENTE los encabezados romanos (I, II, III, IV).
-                
-                BÚSQUEDA DE DATOS (REGLAS):
-                - DATOS DEL PACIENTE: Extrae Nombre, Edad, Peso, Altura y BSA.
-                - I. EVALUACIÓN ANATÓMICA: Busca LVIDd (DDVI), LVIDs (DSVI), IVSd (Septum), LVPWd (Pared).
-                - II. FUNCIÓN VENTRICULAR: Busca EF (FEy) y FS (FA). Si hay varios, usa el valor de 'scanMode = M'.
-                - III. EVALUACIÓN HEMODINÁMICA: Busca valores de Doppler (E/A, E/e', Vena Cava).
-                - IV. CONCLUSIÓN: Si FEy >= 55%: "Función ventricular izquierda conservada".
-                
-                ESTRUCTURA OBLIGATORIA:
+                ESTRUCTURA:
                 DATOS DEL PACIENTE:
                 I. EVALUACIÓN ANATÓMICA:
                 II. FUNCIÓN VENTRICULAR:
                 III. EVALUACIÓN HEMODINÁMICA:
                 IV. CONCLUSIÓN:
                 Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
-                
+
                 TEXTO TÉCNICO:
-                {texto_crudo[:20000]}
+                {texto_crudo}
                 """
                 
                 resp = client.chat.completions.create(
@@ -109,8 +100,8 @@ if archivo_datos and archivo_pdf and api_key:
                 resultado = resp.choices[0].message.content
                 st.info(resultado)
                 
-                docx_out = generar_docx_profesional(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Word Oficial", docx_out, "Informe_Cardio.docx")
+                docx_out = generar_docx(resultado, archivo_pdf.getvalue())
+                st.download_button("📥 Descargar Word", docx_out, "Informe_Final.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
