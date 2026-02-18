@@ -9,127 +9,129 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- PARSER DE GRADO INDUSTRIAL ---
+# --- MOTOR DE EXTRACCIÓN DE ALTA PRECISIÓN ---
 
-class SonoscapeParser:
+class SonoscapeEngine:
     @staticmethod
-    def extraer_datos(texto):
-        # Mapeo de etiquetas técnicas del TXT de Alicia a nombres internos
-        mapeo = {
-            'LVID(d)': 'ddvi', 'LVIDd': 'ddvi', 'DDVI': 'ddvi',
-            'LVID(s)': 'dsvi', 'LVIDs': 'dsvi', 'DSVI': 'dsvi',
-            'IVS(d)': 'septum', 'IVSd': 'septum', 'DDSIV': 'septum',
-            'LVPW(d)': 'pared', 'LVPWd': 'pared', 'DDPP': 'pared',
-            'EF(Teich)': 'fey', 'EF': 'fey', 'LVEF': 'fey',
-            'FS(Teich)': 'fa', 'FS': 'fa', 'FA': 'fa'
+    def parse_biometry(text):
+        # Mapeo exhaustivo basado en el TXT de Alicia y Silvia
+        mapping = {
+            'ddvi': ['LVIDd', 'LVID(d)', 'DDVI', 'Diastolic LVID'],
+            'dsvi': ['LVIDs', 'LVID(s)', 'DSVI', 'Systolic LVID'],
+            'septum': ['IVSd', 'IVS(d)', 'DDSIV', 'Septum'],
+            'pared': ['LVPWd', 'LVPW(d)', 'DDPP', 'Pared'],
+            'fey': ['EF', 'EF(Teich)', 'LVEF', 'FEy'],
+            'fa': ['FS', 'FS(Teich)', 'FA', 'Fractional Shortening']
         }
         
-        resultados = {k: "No evaluado" for k in ['ddvi', 'dsvi', 'septum', 'pared', 'fey', 'fa']}
+        results = {k: "No evaluado" for k in mapping.keys()}
         
-        # Dividimos el archivo en los bloques [MEASUREMENT] que vimos en el TXT de Alicia
-        bloques = texto.split('[MEASUREMENT]')
+        # Separamos por bloques de medición para evitar cruces
+        blocks = text.split('[MEASUREMENT]')
         
-        for bloque in bloques:
-            match_item = re.search(r'item\s*=\s*([^\r\n]+)', bloque, re.I)
-            match_val = re.search(r'value\s*=\s*([\d\.,]+)', bloque, re.I)
+        for block in blocks:
+            # Extraer ítem y valor del bloque actual
+            item_match = re.search(r'item\s*=\s*([^\r\n]+)', block, re.I)
+            val_match = re.search(r'value\s*=\s*([\d\.,]+)', block, re.I)
             
-            if match_item and match_val:
-                item_nombre = match_item.group(1).strip()
-                valor_str = match_val.group(1).replace(',', '.')
+            if item_match and val_match:
+                found_tag = item_match.group(1).strip()
+                val_str = val_match.group(1).replace(',', '.')
                 
-                # Verificamos si este ítem nos interesa
-                for clave_tec, clave_interna in mapeo.items():
-                    if clave_tec.lower() == item_nombre.lower():
+                for key_internal, tags_list in mapping.items():
+                    if any(t.lower() == found_tag.lower() for t in tags_list):
                         try:
-                            val_f = float(valor_str)
-                            # Solo guardamos si el valor es lógicamente posible (filtro médico)
-                            if (clave_interna in ['fey', 'fa'] and 10 < val_f < 95) or \
-                               (clave_interna not in ['fey', 'fa'] and 0.5 < val_f < 85):
-                                resultados[clave_interna] = f"{val_f:.1f}"
-                        except ValueError:
-                            continue
-        return resultados
+                            val_f = float(val_str)
+                            # Filtro de seguridad médica: evita capturar IDs o fechas
+                            if (key_internal in ['fey', 'fa'] and 10 < val_f < 95) or \
+                               (key_internal not in ['fey', 'fa'] and 0.5 < val_f < 80):
+                                results[key_internal] = f"{val_f:.1f}"
+                        except: continue
+        return results
 
-# --- GENERADOR DE WORD ---
+# --- GENERADOR DE DOCUMENTOS ---
 
-def crear_informe_word(texto_ia, pdf_bytes):
+def build_word_report(ia_text, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
 
-    # Título
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
+    # Encabezado centrado
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
 
-    # Contenido
-    for linea in texto_ia.split('\n'):
-        linea = linea.strip()
-        if not linea or "proporcionan" in linea.lower(): continue
-        para = doc.add_paragraph()
-        if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "DATOS", "CONCLUSIÓN"]):
-            para.add_run(linea.replace("**", "")).bold = True
+    # Cuerpo del informe (Limpieza de frases de error de la IA)
+    for line in ia_text.split('\n'):
+        line = line.strip()
+        if not line or "proporcionan" in line.lower(): continue
+        p = doc.add_paragraph()
+        if any(h in line.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
+            p.add_run(line.replace("**", "")).bold = True
         else:
-            para.add_run(linea.replace("**", ""))
+            p.add_run(line.replace("**", ""))
 
-    # Firma
+    # Firma Dr. Pastore
     doc.add_paragraph("\n")
-    firma = doc.add_paragraph()
-    firma.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    firma.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
+    signature = doc.add_paragraph()
+    signature.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    signature.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
 
-    # Imágenes
+    # Anexo de Imágenes
     if pdf_bytes:
         doc.add_page_break()
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
         imgs = [pdf.extract_image(img[0])["image"] for page in pdf for img in page.get_images(full=True)]
         if imgs:
-            tabla = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
+            doc.add_paragraph("ANEXO DE IMÁGENES").alignment = WD_ALIGN_PARAGRAPH.CENTER
+            table = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
             for i, img_data in enumerate(imgs):
-                run = tabla.cell(i//2, i%2).paragraphs[0].add_run()
-                run.add_picture(io.BytesIO(img_data), width=Inches(2.8))
+                cell_p = table.cell(i//2, i%2).paragraphs[0]
+                cell_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cell_p.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.8))
         pdf.close()
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
 
-# --- APP ---
+# --- INTERFAZ STREAMLIT ---
 
-st.set_page_config(page_title="CardioReport Pro Senior", layout="centered")
+st.set_page_config(page_title="CardioReport Senior v6", layout="centered")
 st.title("❤️ Generador de Informes Médicos")
 
-u_txt = st.file_uploader("1. TXT de Datos", type=["txt"])
-u_pdf = st.file_uploader("2. PDF de Imágenes", type=["pdf"])
-key = st.secrets.get("GROQ_API_KEY")
+u_txt = st.file_uploader("1. Subir TXT del Ecógrafo", type=["txt"])
+u_pdf = st.file_uploader("2. Subir PDF de Imágenes", type=["pdf"])
+api_key = st.secrets.get("GROQ_API_KEY")
 
-if u_txt and u_pdf and key:
-    if st.button("🚀 GENERAR INFORME FINAL"):
+if u_txt and u_pdf and api_key:
+    if st.button("🚀 GENERAR INFORME"):
         try:
-            content = u_txt.read().decode("latin-1", errors="ignore")
-            datos = SonoscapeParser.extraer_datos(content)
+            raw_content = u_txt.read().decode("latin-1", errors="ignore")
             
-            # Extraer BSA y Datos Personales del bloque [PATINET INFO]
-            bsa_match = re.search(r'BSA\s*=\s*([\d\.]+)', content)
-            bsa = bsa_match.group(1) if bsa_match else "No calculado"
+            # Paso 1: Extracción Técnica (Código Python Puro)
+            data_tech = SonoscapeEngine.parse_biometry(raw_content)
             
-            client = Groq(api_key=key)
+            # Paso 2: Redacción con IA
+            client = Groq(api_key=api_key)
             prompt = f"""
-            ERES EL DR. FRANCISCO ALBERTO PASTORE.
-            Redacta el informe para ALICIA ALBORNOZ usando estos valores:
-            DDVI: {datos['ddvi']} mm, DSVI: {datos['dsvi']} mm, Septum: {datos['septum']} mm, Pared: {datos['pared']} mm.
-            FEy: {datos['fey']} %, FA: {datos['fa']} %, BSA: {bsa}.
+            ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta el informe para ALICIA ALBORNOZ.
+            DATOS TÉCNICOS DETECTADOS (ÚSALOS SÍ O SÍ):
+            DDVI: {data_tech['ddvi']} mm, DSVI: {data_tech['dsvi']} mm, 
+            Septum: {data_tech['septum']} mm, Pared: {data_tech['pared']} mm,
+            FEy: {data_tech['fey']} %, FA: {data_tech['fa']} %.
             
-            Usa el texto para nombre y edad: {content[:1000]}
+            TEXTO ORIGINAL PARA ANTECEDENTES: {raw_content[:2000]}
             
-            ESTRUCTURA: DATOS PACIENTE, I. ANATÓMICA, II. FUNCIÓN, III. HEMODINÁMICA (Sin particularidades), IV. CONCLUSIÓN.
-            REGLA: Si FEy >= 55%: 'Función ventricular izquierda conservada'.
+            FORMATO: I. ANATÓMICA, II. FUNCIÓN, III. HEMODINÁMICA, IV. CONCLUSIÓN.
+            REGLA MÉDICA: Si FEy >= 55% -> Función conservada.
             """
             
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0)
-            informe = res.choices[0].message.content
-            st.info(informe)
+            chat = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0)
+            final_txt = chat.choices[0].message.content
+            st.info(final_txt)
             
-            st.download_button("📥 Descargar Word", crear_informe_word(informe, u_pdf.getvalue()), "Informe.docx")
+            st.download_button("📥 Descargar Informe Oficial", build_word_report(final_txt, u_pdf.getvalue()), f"Informe_{u_txt.name}.docx")
+            
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error de sistema: {e}")
