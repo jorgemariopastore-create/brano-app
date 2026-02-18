@@ -9,7 +9,7 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # --- 1. MOTOR DE EXTRACCIÓN ---
-def motor_v37_4(texto):
+def motor_v37_5(texto):
     info = {"paciente": "ALBORNOZ ALICIA", "edad": "74", "peso": "56", "altura": "152", "fey": "68", "ddvi": "40", "drao": "32", "ddai": "32", "siv": "11"}
     if texto:
         n = re.search(r"(?:Paciente|Name|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto, re.I)
@@ -21,12 +21,13 @@ def motor_v37_4(texto):
             if m: info[k] = m.group(1)
     return info
 
-# --- 2. GENERADOR DE WORD (CORREGIDO) ---
-def crear_word_v37_4(texto_ia, datos, pdf_bytes):
+# --- 2. GENERADOR DE WORD PROFESIONAL ---
+def crear_word_v37_5(texto_ia, datos, pdf_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name, style.font.size = 'Arial', Pt(11)
     
+    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
@@ -35,7 +36,6 @@ def crear_word_v37_4(texto_ia, datos, pdf_bytes):
     # Tabla de Filiación
     tbl = doc.add_table(rows=2, cols=3)
     tbl.style = 'Table Grid'
-    # Llenado manual para evitar errores de atributos
     tbl.cell(0,0).text = f"PACIENTE: {datos['paciente']}"
     tbl.cell(0,1).text = f"EDAD: {datos['edad']} años"
     tbl.cell(0,2).text = "FECHA: 13/02/2026"
@@ -54,19 +54,23 @@ def crear_word_v37_4(texto_ia, datos, pdf_bytes):
         tm.cell(i, 0).text, tm.cell(i, 1).text = n, v
 
     doc.add_paragraph("\n")
+    # Párrafos del informe
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('*', '').replace('"', '')
-        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado"]): continue
+        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente"]): continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]): p.add_run(linea).bold = True
-        else: p.add_run(linea)
+        if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
+            p.add_run(linea).bold = True
+        else:
+            p.add_run(linea)
 
     doc.add_paragraph("\n")
     f = doc.add_paragraph()
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
+    # Imágenes
     if pdf_bytes:
         try:
             pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -78,40 +82,10 @@ def crear_word_v37_4(texto_ia, datos, pdf_bytes):
                 doc.add_page_break()
                 ti = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
                 for i, img_data in enumerate(imgs):
-                    row, col = i // 2, i % 2
-                    p_i = ti.cell(row, col).paragraphs[0]
+                    p_i = ti.cell(i//2, i%2).paragraphs[0]
                     p_i.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     p_i.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.5))
             pdf.close()
         except: pass
     
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-# --- 3. INTERFAZ ---
-st.set_page_config(page_title="CardioReport Pro v37.4", layout="wide")
-st.title("❤️ CardioReport Pro v37.4")
-
-c1, c2 = st.columns(2)
-with c1: u_txt = st.file_uploader("1. Datos (TXT/HTML)", type=["txt", "html"])
-with c2: u_pdf = st.file_uploader("2. PDF Original", type=["pdf"])
-
-api_key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API Key", type="password")
-
-if u_txt and u_pdf and api_key:
-    raw = u_txt.read().decode("latin-1", errors="ignore")
-    datos_e = motor_v37_4(raw)
-    st.markdown("---")
-    v1, v2, v3 = st.columns(3)
-    with v1:
-        f_paciente = st.text_input("Paciente", datos_e["paciente"])
-        f_fey = st.text_input("FEy (%)", datos_e["fey"])
-    with v2:
-        f_edad = st.text_input("Edad", datos_e["edad"])
-        f_ddvi = st.text_input("DDVI (mm)", datos_e["ddvi"])
-    with v3:
-        f_siv = st.text_input("SIV (mm)", datos_e["siv"])
-        f_drao = st.text_input("DRAO (mm)", datos_e["drao"])
-
-    if st.button("🚀 GENERAR INFOR
+    buf = io.Bytes
