@@ -3,3 +3,4 @@ groq
 pymupdf
 docx2txt
 python-docx
+beautifulsoup4
