@@ -7,7 +7,7 @@ import docx2txt
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from bs4 import BeautifulSoup # Para manejar HTML si decides subirlo
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
@@ -15,7 +15,6 @@ st.subheader("Dr. Francisco Alberto Pastore")
 
 col1, col2 = st.columns(2)
 with col1:
-    # Ahora aceptamos también HTML
     archivo_datos = st.file_uploader("1. Reporte de Datos (TXT, DOCX o HTML)", type=["txt", "docx", "html"])
 with col2:
     archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
@@ -23,11 +22,9 @@ with col2:
 api_key = st.secrets.get("GROQ_API_KEY")
 
 def procesar_archivo_datos(archivo):
-    """Detecta el tipo de archivo y extrae el texto limpiamente."""
     if archivo.name.endswith('.docx'):
         return docx2txt.process(archivo)
     elif archivo.name.endswith('.html'):
-        # Si es HTML, quitamos las etiquetas para dejar solo el texto
         soup = BeautifulSoup(archivo.read().decode("latin-1", errors="ignore"), "html.parser")
         return soup.get_text(separator=' ')
     else:
@@ -45,10 +42,11 @@ def generar_docx_profesional(texto, pdf_bytes):
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea or any(x in linea.lower() for x in ["lo siento", "nota:", "asumiendo", "proporciona"]):
+        # Filtro de seguridad para eliminar cualquier residuo de comentarios de la IA
+        if not linea or any(x in linea.lower() for x in ["importante tener en cuenta", "nota:", "descargo", "interpretación", "proporcionado"]):
             continue
         p = doc.add_paragraph()
-        if any(h in linea.upper() for h in ["DATOS DEL PACIENTE", "I.", "II.", "III.", "IV.", "FIRMA"]):
+        if any(h in linea.upper() for h in ["DATOS DEL PACIENTE", "I.", "II.", "III.", "IV.", "CONCLUSIÓN", "FIRMA"]):
             p.add_run(linea.replace("**", "")).bold = True
         else:
             p.add_run(linea.replace("**", ""))
@@ -67,32 +65,38 @@ def generar_docx_profesional(texto, pdf_bytes):
     return buf.getvalue()
 
 if archivo_datos and archivo_pdf and api_key:
-    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
+    if st.button("🚀 GENERAR INFORME ESTRUCTURADO"):
         try:
-            with st.spinner("Escaneando reporte del paciente..."):
+            with st.spinner("Generando informe médico oficial..."):
                 texto_crudo = procesar_archivo_datos(archivo_datos)
                 
                 client = Groq(api_key=api_key)
                 
-                # El Prompt ahora es más inteligente para buscar los datos del paciente específico
+                # PROMPT REDISEÑADO: MODO TRANSCRIPCIÓN MÉDICA ESTRICTA
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE.
-                Extrae con precisión los datos de este estudio ecocardiográfico.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. TU ÚNICA FUNCIÓN ES TRANSCRIPCIÓN MÉDICA.
                 
-                DATOS DEL PACIENTE: Busca Nombre, Edad, Peso y Altura.
+                INSTRUCCIONES DE FORMATO:
+                1. NO incluyas introducciones ni despedidas.
+                2. NO incluyas notas aclaratorias, advertencias ni comentarios sobre la calidad de los datos.
+                3. Usa EXCLUSIVAMENTE los encabezados romanos (I, II, III, IV).
                 
-                VALORES TÉCNICOS:
-                - DDVI: búscalo como LVIDd.
-                - DSVI: búscalo como LVIDs.
-                - Septum e Inferolateral: búscalo como IVSd y LVPWd.
-                - FEy: búscalo como EF o Fracción de eyección.
+                BÚSQUEDA DE DATOS (REGLAS):
+                - DATOS DEL PACIENTE: Extrae Nombre, Edad, Peso, Altura y BSA.
+                - I. EVALUACIÓN ANATÓMICA: Busca LVIDd (DDVI), LVIDs (DSVI), IVSd (Septum), LVPWd (Pared).
+                - II. FUNCIÓN VENTRICULAR: Busca EF (FEy) y FS (FA). Si hay varios, usa el valor de 'scanMode = M'.
+                - III. EVALUACIÓN HEMODINÁMICA: Busca valores de Doppler (E/A, E/e', Vena Cava).
+                - IV. CONCLUSIÓN: Si FEy >= 55%: "Función ventricular izquierda conservada".
                 
-                REGLAS:
-                1. No inventes datos. Si no encuentras algo, no lo menciones.
-                2. Si la FEy es >= 55%: Conclusión "Función ventricular izquierda conservada".
-                3. Usa un tono médico profesional.
+                ESTRUCTURA OBLIGATORIA:
+                DATOS DEL PACIENTE:
+                I. EVALUACIÓN ANATÓMICA:
+                II. FUNCIÓN VENTRICULAR:
+                III. EVALUACIÓN HEMODINÁMICA:
+                IV. CONCLUSIÓN:
+                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
                 
-                TEXTO DEL ESTUDIO:
+                TEXTO TÉCNICO:
                 {texto_crudo[:20000]}
                 """
                 
@@ -106,7 +110,7 @@ if archivo_datos and archivo_pdf and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Informe en Word", docx_out, "Informe_Medico.docx")
+                st.download_button("📥 Descargar Word Oficial", docx_out, "Informe_Cardio.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
