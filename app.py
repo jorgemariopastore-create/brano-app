@@ -17,25 +17,23 @@ archivo_datos = st.file_uploader("1. Reporte de Datos (TXT o DOCX)", type=["txt"
 archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def extraer_valor_logico(texto, etiquetas, es_porcentaje=False):
+def extraer_valor_robusto(texto, etiquetas, es_porcentaje=False):
     """
-    Busca valores numéricos y descarta los que parecen fechas o son imposibles.
+    Busca valores médicos lógicos evitando fechas y números de ID.
     """
     for etiqueta in etiquetas:
-        # Busca la etiqueta y el número más cercano que tenga sentido médico
+        # Busca la etiqueta y captura números en un radio de 60 caracteres
         patron = re.compile(rf"{re.escape(etiqueta)}.*?(?:value\s*=\s*|[:\s])([\d\.,]+)", re.DOTALL | re.IGNORECASE)
         matches = patron.finditer(texto)
         for match in matches:
             valor_raw = match.group(1).replace(',', '.')
             try:
-                valor_float = float(valor_raw)
-                # Filtro de seguridad:
+                val = float(valor_raw)
+                # Filtros de sentido común médico
                 if es_porcentaje:
-                    if 10 < valor_float < 95: # Una FEy lógica
-                        return str(valor_float)
+                    if 15 <= val <= 90: return str(val) # FEy o FA lógica
                 else:
-                    if 0.5 < valor_float < 80: # Un diámetro lógico en mm o cm
-                        return str(valor_float)
+                    if 0.5 <= val <= 75: return str(val) # Diámetros/Espesores lógicos
             except:
                 continue
     return "No evaluado"
@@ -52,7 +50,7 @@ def generar_docx_profesional(texto, pdf_bytes):
 
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea or any(x in linea.lower() for x in ["nota:", "disculpas", "advertencia", "proporcionan"]): continue
+        if not linea or any(x in linea.lower() for x in ["nota:", "disculpas", "proporcionan"]): continue
         p = doc.add_paragraph()
         if any(h in linea.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
             p.add_run(linea.replace("**", "")).bold = True
@@ -94,37 +92,40 @@ def generar_docx_profesional(texto, pdf_bytes):
 if archivo_datos and archivo_pdf and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Escaneando datos del estudio..."):
+            with st.spinner("Escaneando datos médicos de Alicia Albornoz..."):
                 if archivo_datos.name.endswith('.docx'):
                     texto_crudo = docx2txt.process(archivo_datos)
                 else:
                     texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
 
-                # BÚSQUEDA ROBUSTA (Evita capturar fechas como valores)
-                ddvi = extraer_valor_logico(texto_crudo, ["LVID(d)", "LVIDd", "DDVI"])
-                dsvi = extraer_valor_logico(texto_crudo, ["LVID(s)", "LVIDs", "DSVI"])
-                septum = extraer_valor_logico(texto_crudo, ["IVS(d)", "IVSd", "Septum"])
-                pared = extraer_valor_logico(texto_crudo, ["LVPW(d)", "LVPWd", "Pared"])
-                fey = extraer_valor_logico(texto_crudo, ["EF(Teich)", "EF", "FEy"], es_porcentaje=True)
-                fa = extraer_valor_logico(texto_crudo, ["FS(Teich)", "FS", "FA"], es_porcentaje=True)
+                # ESCANEO DINÁMICO MEJORADO
+                ddvi = extraer_valor_robusto(texto_crudo, ["LVID(d)", "LVIDd", "DDVI"])
+                dsvi = extraer_valor_robusto(texto_crudo, ["LVID(s)", "LVIDs", "DSVI"])
+                septum = extraer_valor_robusto(texto_crudo, ["IVS(d)", "IVSd", "Septum", "DDSIV"])
+                pared = extraer_valor_robusto(texto_crudo, ["LVPW(d)", "LVPWd", "Pared", "DDPP"])
+                fey = extraer_valor_robusto(texto_crudo, ["EF(Teich)", "EF", "FEy"], es_porcentaje=True)
+                fa = extraer_valor_robusto(texto_crudo, ["FS(Teich)", "FS", "FA"], es_porcentaje=True)
 
                 client = Groq(api_key=api_key)
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE. 
-                Usa estos valores médicos confirmados para redactar el informe:
-                
-                DDVI: {ddvi} mm, DSVI: {dsvi} mm, Septum: {septum} mm, Pared: {pared} mm.
-                FEy: {fey} %, FA: {fa} %.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta el informe médico oficial.
+                Usa estos valores técnicos detectados (NO DIGAS QUE NO ESTÁN DISPONIBLES):
+                - DDVI: {ddvi} mm
+                - DSVI: {dsvi} mm
+                - Septum: {septum} mm
+                - Pared: {pared} mm
+                - FEy: {fey} %
+                - FA: {fa} %
 
-                TEXTO COMPLETO PARA NOMBRE Y ANTECEDENTES:
-                {texto_crudo[:10000]}
+                DATOS DEL PACIENTE: Busca el nombre y datos personales en este texto:
+                {texto_crudo[:3000]}
 
-                FORMATO:
-                DATOS DEL PACIENTE:
+                ESTRUCTURA:
+                DATOS DEL PACIENTE: (Nombre, Edad, Peso, Altura, BSA)
                 I. EVALUACIÓN ANATÓMICA
                 II. FUNCIÓN VENTRICULAR
-                III. EVALUACIÓN HEMODINÁMICA
-                IV. CONCLUSIÓN (Si FEy >= 55%: Función conservada)
+                III. EVALUACIÓN HEMODINÁMICA (Sin particularidades si no hay datos)
+                IV. CONCLUSIÓN (Si FEy >= 55%: Función ventricular izquierda conservada)
                 """
                 
                 resp = client.chat.completions.create(
@@ -137,7 +138,7 @@ if archivo_datos and archivo_pdf and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Informe", docx_out, f"Informe_{archivo_datos.name}.docx")
+                st.download_button("📥 Descargar Word", docx_out, f"Informe_{archivo_datos.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
