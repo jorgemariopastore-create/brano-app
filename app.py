@@ -8,7 +8,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 def motor(t):
     hoy = datetime.datetime.now().strftime("%d/%m/%Y")
-    d = {"pac": "ALBORNOZ ALICIA", "ed": "74", "fy": "68", "dv": "40", "dr": "32", "ai": "32", "si": "11", "fecha": hoy}
+    d = {"pac": "ALBORNOZ ALICIA", "ed": "74", "fy": "68", 
+         "dv": "40", "dr": "32", "ai": "32", "si": "11", "fecha": hoy}
     if t:
         n = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\r\n]*)", t, re.I)
         if n: d["pac"] = n.group(1).strip().upper()
@@ -28,20 +29,30 @@ def motor(t):
 
 def docx(rep, dt, pdf_b):
     doc = Document()
-    doc.styles['Normal'].font.name, doc.styles['Normal'].font.size = 'Arial', Pt(11)
+    doc.styles['Normal'].font.name = 'Arial'
+    doc.styles['Normal'].font.size = Pt(11)
     h = doc.add_paragraph()
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = h.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
-    r.bold, r.font.size = True, Pt(12)
-    b1 = doc.add_table(rows=2, cols=3); b1.style = 'Table Grid'
-    ls = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", f"FECHA: {dt['fecha']}", "PESO: 56 kg", "ALTURA: 152 cm", "BSA: 1.54 m²"]
-    for i, x in enumerate(ls): b1.cell(i//3, i%3).text = x
+    r.bold = True
+    r.font.size = Pt(12)
+    b1 = doc.add_table(rows=2, cols=3)
+    b1.style = 'Table Grid'
+    ls = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", 
+          f"FECHA: {dt['fecha']}", "PESO: 56 kg", 
+          "ALTURA: 152 cm", "BSA: 1.54 m²"]
+    for i, x in enumerate(ls): 
+        b1.cell(i//3, i%3).text = x
     doc.add_paragraph("\n")
-    b2 = doc.add_table(rows=5, cols=2); b2.style = 'Table Grid'
-    ms = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
-    for i, (n, v) in enumerate(ms): b2.cell(i,0).text, b2.cell(i,1).text = n, v
+    b2 = doc.add_table(rows=5, cols=2)
+    b2.style = 'Table Grid'
+    ms = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), 
+          ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), 
+          ("FEy", f"{dt['fy']} %")]
+    for i, (n, v) in enumerate(ms): 
+        b2.cell(i,0).text = n
+        b2.cell(i,1).text = v
     doc.add_paragraph("\n")
-    # Limpieza de texto fragmentada para evitar SyntaxError
     for l in rep.split('\n'):
         l = l.strip()
         l = l.replace('*', '')
@@ -52,12 +63,23 @@ def docx(rep, dt, pdf_b):
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         headers = ["I.", "II.", "III.", "IV.", "CONCL"]
-        if any(l.upper().startswith(h) for h in headers): p.add_run(l).bold = True
-        else: p.add_run(l)
+        if any(l.upper().startswith(h) for h in headers): 
+            p.add_run(l).bold = True
+        else: 
+            p.add_run(l)
     f = doc.add_paragraph()
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
+    f.add_run("\n__________________________")
+    f.add_run("\nDr. FRANCISCO ALBERTO PASTORE")
+    f.add_run("\nMN 74144").bold = True
     if pdf_b:
         try:
             with fitz.open(stream=pdf_b, filetype="pdf") as dp:
-                ims = [dp.extract_image(i[0])["image"] for p in
+                ims = []
+                for pag in dp:
+                    for img in pag.get_images():
+                        ims.append(dp.extract_image(img[0])["image"])
+                if ims:
+                    doc.add_page_break()
+                    filas = (len(ims) + 1) // 2
+                    ti = doc.add_table(rows=filas, cols=2
