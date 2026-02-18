@@ -6,16 +6,6 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. Función de IA aislada para evitar cortes de sintaxis
-def pedir_ia(key, p, f, e, d, s, a):
-    try:
-        client = Groq(api_key=key)
-        px = f"Redacta informe médico: I. ANATOMÍA: Raíz aórtica ({a}mm) y aurícula izquierda normales. Cavidades con espesores conservados (SIV {s}mm). II. FUNCIÓN: Sistólica conservada. FEy {f}%. III. VÁLVULAS: Ecoestructura normal. IV. CONCLUSIÓN: Normal. Sin introducciones."
-        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
-        return res.choices[0].message.content
-    except Exception as e:
-        return f"Error IA: {str(e)}"
-
 def motor(t):
     d = {"pac": "ALBORNOZ ALICIA", "ed": "74", "fy": "68", "dv": "40", "dr": "32", "ai": "32", "si": "11"}
     if t:
@@ -26,17 +16,7 @@ def motor(t):
             if m: d[k] = m.group(1)
     return d
 
-def get_imgs(pdf_b):
-    out = []
-    try:
-        with fitz.open(stream=pdf_b, filetype="pdf") as doc:
-            for p in doc:
-                for i in p.get_images():
-                    out.append(doc.extract_image(i[0])["image"])
-    except: pass
-    return out
-
-def docx(rep, dt, imgs):
+def docx(rep, dt, pdf_b):
     doc = Document()
     doc.styles['Normal'].font.name, doc.styles['Normal'].font.size = 'Arial', Pt(11)
     h = doc.add_paragraph()
@@ -57,19 +37,42 @@ def docx(rep, dt, imgs):
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if any(l.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]): p.add_run(l).bold = True
         else: p.add_run(l)
-    doc.add_paragraph("\n")
-    f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("__________________________").bold = True
-    f.add_run("\nDr. FRANCISCO ALBERTO PASTORE").bold = True
-    f.add_run("\nMédico Cardiólogo - MN 74144").bold = True
-    if imgs:
-        doc.add_page_break()
-        ti = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
-        for i, m in enumerate(imgs):
-            c = ti.cell(i // 2, i % 2)
-            c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            c.paragraphs[0].add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
+    f = doc.add_paragraph()
+    f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    f.add_run("\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
+    if pdf_b:
+        try:
+            with fitz.open(stream=pdf_b, filetype="pdf") as doc_p:
+                ims = [doc_p.extract_image(i[0])["image"] for p in doc_p for i in p.get_images()]
+                if ims:
+                    doc.add_page_break()
+                    ti = doc.add_table(rows=(len(ims)+1)//2, cols=2)
+                    for i, m in enumerate(ims):
+                        c = ti.cell(i//2, i%2).paragraphs[0]
+                        c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        c.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
+        except: pass
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-st.set_page_config(page_title="CardioPro 38.7", layout="wide")
-st.title("❤️ CardioReport Pro v38.7")
+st.set_page_config(page_title="CardioPro", layout="wide")
+st.title("❤️ CardioReport Pro v38.8")
+u1 = st.file_uploader("1. TXT", type=["txt", "html"])
+u2 = st.file_uploader("2. PDF", type=["pdf"])
+ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
+
+if u1 and u2 and ak:
+    dt = motor(u1.read().decode("latin-1", errors="ignore"))
+    st.subheader("🔍 VALIDACIÓN")
+    v1, v2, v3 = st.columns(3)
+    p, f = v1.text_input("Pac", dt["pac"]), v1.text_input("FEy", dt["fy"])
+    e, d = v2.text_input("Ed", dt["ed"]), v2.text_input("DDVI", dt["dv"])
+    s, a = v3.text_input("SIV", dt["si"]), v3.text_input("DRAO", dt["dr"])
+    if st.button("🚀 GENERAR"):
+        cl = Groq(api_key=ak)
+        px = f"Informe médico conciso I a IV: Anatomía (Raíz {a}mm, SIV {s}mm), Función (FEy {f}%), Válvulas y Conclusión Normal. Sin intro."
+        rs = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
+        rep = rs.choices[0].message.content
+        st.info(rep)
+        fd = {"pac":p,"ed":e,"fy":f,"dv":d,"dr":a,"si":s,"ai":dt["ai"]}
+        w = docx(rep, fd, u2.getvalue())
+        st.download_button("📥 DESCARGAR", w, f"{p}.docx")
