@@ -106,9 +106,9 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
     doc.save(buf)
     return buf.getvalue()
 
-# --- 3. INTERFAZ ---
-st.set_page_config(page_title="CardioReport Pro v35.2", layout="wide")
-st.title("❤️ CardioReport Pro v35.2")
+# --- 3. INTERFAZ DE USUARIO ---
+st.set_page_config(page_title="CardioReport Pro v35.3", layout="wide")
+st.title("❤️ CardioReport Pro v35.3")
 
 u_txt = st.file_uploader("1. Subir TXT/HTML del Ecógrafo", type=["txt", "html"])
 u_pdf = st.file_uploader("2. Subir PDF con Capturas", type=["pdf"])
@@ -133,6 +133,30 @@ if u_txt and u_pdf and api_key:
 
     if st.button("🚀 GENERAR INFORME CARDIOLÓGICO", type="primary"):
         client = Groq(api_key=api_key)
+        
+        # EL SIGUIENTE BLOQUE ES EL QUE DABA ERROR (AHORA CERRADO CORRECTAMENTE)
         prompt_medico = f"""
         ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta un informe médico seco y técnico.
-        I. ANATOMÍA: Raíz aórtica y aurícula izquierda de diámetros normales. Cavidades ventriculares de dimensiones y
+        I. ANATOMÍA: Raíz aórtica y aurícula izquierda de diámetros normales. Cavidades ventriculares de dimensiones y espesores parietales normales.
+        II. FUNCIÓN VENTRICULAR: Función sistólica del VI conservada (FEy {fey_f}%). Fracción de acortamiento normal.
+        III. VÁLVULAS Y DOPPLER: Ecoestructura normal. Apertura y cierre conservado. Flujos laminares sin reflujos patológicos.
+        IV. CONCLUSIÓN: Estudio dentro de parámetros normales para la edad.
+        """
+        
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", 
+            messages=[{"role": "user", "content": prompt_medico}], 
+            temperature=0
+        )
+        
+        texto_ia = res.choices[0].message.content
+        st.info(texto_ia)
+        
+        datos_finales = {
+            "paciente": nom_f, "edad": eda_f, "peso": pes_f, 
+            "altura": alt_f, "fey": fey_f, "ddvi": ddvi_f, 
+            "drao": "32", "ddai": "32"
+        }
+        word_out = crear_word_final(texto_ia, datos_finales, u_pdf.getvalue())
+        
+        st.download_button("📥 DESCARGAR INFORME WORD", word_out, f"Informe_{nom_f}.docx")
