@@ -35,12 +35,10 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
     
-    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Tabla Identificación
     table = doc.add_table(rows=2, cols=3)
     table.style = 'Table Grid'
     table.rows[0].cells[0].text = f"PACIENTE: {datos_v['paciente']}"
@@ -54,8 +52,6 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
     except: table.rows[1].cells[2].text = "BSA: --"
 
     doc.add_paragraph("\n")
-
-    # Tabla Hallazgos
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
@@ -72,7 +68,6 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Texto del Informe
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('"', '')
         if not linea or "informe" in linea.lower(): continue
@@ -83,13 +78,11 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
         else:
             p.add_run(linea)
 
-    # Firma
     doc.add_paragraph("\n")
     f = doc.add_paragraph()
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
-    # --- BLOQUE DE IMÁGENES (CORREGIDO) ---
     if pdf_bytes:
         doc.add_page_break()
         doc.add_paragraph("ANEXO DE IMÁGENES").bold = True
@@ -114,8 +107,8 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
     return buf.getvalue()
 
 # --- 3. INTERFAZ ---
-st.set_page_config(page_title="CardioReport Pro v35.1", layout="wide")
-st.title("❤️ CardioReport Pro v35.1")
+st.set_page_config(page_title="CardioReport Pro v35.2", layout="wide")
+st.title("❤️ CardioReport Pro v35.2")
 
 u_txt = st.file_uploader("1. Subir TXT/HTML del Ecógrafo", type=["txt", "html"])
 u_pdf = st.file_uploader("2. Subir PDF con Capturas", type=["pdf"])
@@ -141,4 +134,5 @@ if u_txt and u_pdf and api_key:
     if st.button("🚀 GENERAR INFORME CARDIOLÓGICO", type="primary"):
         client = Groq(api_key=api_key)
         prompt_medico = f"""
-        ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta un
+        ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta un informe médico seco y técnico.
+        I. ANATOMÍA: Raíz aórtica y aurícula izquierda de diámetros normales. Cavidades ventriculares de dimensiones y
