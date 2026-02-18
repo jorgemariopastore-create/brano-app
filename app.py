@@ -9,24 +9,25 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- MOTOR DE EXTRACCIÓN DE ALTA PRECISIÓN (ESPECÍFICO SONOSCAPE) ---
+# --- MOTOR DE EXTRACCIÓN AVANZADA (MODO SABUESO) ---
 
-def extraer_valor_sonoscape(texto, etiquetas, es_porcentaje=False):
+def extraer_dato_final(texto, posibles_nombres, es_fey=False):
     """
-    Busca el valor numérico real. 
-    En el archivo de Alicia, los datos aparecen después de 'value ='.
+    Busca el valor numérico recorriendo todos los bloques de medición.
+    Diseñado específicamente para las variaciones de Alicia (Area-Len, Simpson, etc.)
     """
-    for etiqueta in etiquetas:
-        # Buscamos el bloque donde aparece la etiqueta y luego el primer 'value =' que tenga números
-        # Este patrón es mucho más agresivo para saltar los '******'
-        patron = re.compile(rf"{re.escape(etiqueta)}[\s\S]{{0,500}}?value\s*=\s*([\d\.,]+)", re.I)
+    # Buscamos cada nombre posible
+    for nombre in posibles_nombres:
+        # Escaneamos el texto buscando el nombre y el primer 'value =' que no sea asteriscos
+        # El patrón busca el nombre y luego el número más cercano hasta 400 caracteres después
+        patron = re.compile(rf"{re.escape(nombre)}[\s\S]{{0,400}}?value\s*=\s*([\d\.,]+)", re.I)
         matches = patron.finditer(texto)
         for m in matches:
             val_str = m.group(1).replace(',', '.')
             try:
                 val = float(val_str)
-                # Filtros lógicos para no capturar fechas o IDs
-                if es_porcentaje:
+                # Filtros de lógica médica para evitar IDs o fechas
+                if es_fey:
                     if 15 <= val <= 95: return f"{val:.1f}"
                 else:
                     if 0.5 <= val <= 85: return f"{val:.1f}"
@@ -34,17 +35,17 @@ def extraer_valor_sonoscape(texto, etiquetas, es_porcentaje=False):
                 continue
     return "No evaluado"
 
-# --- GENERACIÓN DE INFORME ---
-
-def crear_docx(texto_ia, pdf_bytes):
+def generar_word_oficial(texto_ia, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
 
+    # Encabezado
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
 
+    # Cuerpo del informe
     for linea in texto_ia.split('\n'):
         linea = linea.strip()
         if not linea or "proporcionan" in linea.lower(): continue
@@ -54,11 +55,13 @@ def crear_docx(texto_ia, pdf_bytes):
         else:
             p.add_run(linea.replace("**", ""))
 
+    # Firma
     doc.add_paragraph("\n")
     firma = doc.add_paragraph()
     firma.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     firma.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
 
+    # Imágenes
     if pdf_bytes:
         doc.add_page_break()
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -78,9 +81,9 @@ def crear_docx(texto_ia, pdf_bytes):
 # --- INTERFAZ ---
 
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
-st.title("❤️ Generador de Informes Médicos")
+st.title("❤️ Sistema de Informes Médicos")
 
-u_txt = st.file_uploader("1. Subir TXT (Datos)", type=["txt"])
+u_txt = st.file_uploader("1. Subir TXT (Datos del Ecógrafo)", type=["txt"])
 u_pdf = st.file_uploader("2. Subir PDF (Imágenes)", type=["pdf"])
 key = st.secrets.get("GROQ_API_KEY")
 
@@ -89,34 +92,39 @@ if u_txt and u_pdf and key:
         try:
             content = u_txt.read().decode("latin-1", errors="ignore")
             
-            # Extracción quirúrgica de datos
-            datos = {
-                "ddvi": extraer_valor_sonoscape(content, ["LVIDd", "LVID(d)", "DDVI"]),
-                "dsvi": extraer_valor_sonoscape(content, ["LVIDs", "LVID(s)", "DSVI"]),
-                "sep": extraer_valor_sonoscape(content, ["IVSd", "IVS(d)", "DDSIV"]),
-                "par": extraer_valor_sonoscape(content, ["LVPWd", "LVPW(d)", "DDPP"]),
-                "fey": extraer_valor_sonoscape(content, ["EF", "EF(Teich)", "LVEF"], True),
-                "fa": extraer_valor_sonoscape(content, ["FS", "FS(Teich)", "FA"], True)
+            # EXTRACCIÓN QUIRÚRGICA (Ajustada para Alicia y Silvia)
+            res = {
+                "ddvi": extraer_dato_final(content, ["LVID d", "LVIDd", "DDVI", "LVID(d)"]),
+                "dsvi": extraer_dato_final(content, ["LVID s", "LVIDs", "DSVI", "LVID(s)"]),
+                "sep": extraer_dato_final(content, ["IVS d", "IVSd", "DDSIV", "IVS(d)"]),
+                "par": extraer_dato_final(content, ["LVPW d", "LVPWd", "DDPP", "LVPW(d)"]),
+                "fey": extraer_dato_final(content, ["EF", "LVEF", "EF(Teich)", "FEy"], True),
+                "fa": extraer_dato_final(content, ["FS", "FS(Teich)", "FA"], True)
             }
 
             client = Groq(api_key=key)
             prompt = f"""
             ERES EL DR. FRANCISCO ALBERTO PASTORE.
-            Redacta el informe médico para la paciente ALICIA ALBORNOZ basándote en:
-            DDVI: {datos['ddvi']} mm, DSVI: {datos['dsvi']} mm, Septum: {datos['sep']} mm, Pared: {datos['par']} mm.
-            FEy: {datos['fey']} %, FA: {datos['fa']} %.
+            Redacta el informe médico para ALICIA ALBORNOZ usando estos datos:
+            VALORES OBLIGATORIOS:
+            - DDVI: {res['ddvi']} mm
+            - DSVI: {res['dsvi']} mm
+            - Septum: {res['sep']} mm
+            - Pared: {res['par']} mm
+            - FEy: {res['fey']} %
+            - FA: {res['fa']} %
             
-            Usa el texto para nombre y edad: {content[:1500]}
+            Busca nombre y edad aquí: {content[:1500]}
             
-            ESTRUCTURA: DATOS PACIENTE, I. ANATOMÍA, II. FUNCIÓN, III. HEMODINÁMICA, IV. CONCLUSIÓN.
-            IMPORTANTE: No digas 'No evaluado' si el número está presente arriba.
-            Si FEy >= 55%: 'Función ventricular izquierda conservada'.
+            FORMATO: I. ANATOMÍA, II. FUNCIÓN, III. HEMODINÁMICA, IV. CONCLUSIÓN.
+            IMPORTANTE: Si los mm están arriba, ÚSALOS. No digas 'No se evaluaron'.
+            Si FEy < 55%: 'Disfunción ventricular izquierda'.
             """
             
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0)
-            st.info(res.choices[0].message.content)
+            resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0)
+            st.info(resp.choices[0].message.content)
             
-            st.download_button("📥 Descargar Word", crear_docx(res.choices[0].message.content, u_pdf.getvalue()), "Informe.docx")
+            st.download_button("📥 Descargar Word", generar_word_oficial(resp.choices[0].message.content, u_pdf.getvalue()), "Informe.docx")
             
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error técnico: {e}")
