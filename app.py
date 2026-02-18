@@ -16,16 +16,15 @@ def motor(t):
         n = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\r\n]*)", t, re.I)
         if n: d["pac"] = n.group(1).strip().upper()
         
-        # BUSQUEDA INTELIGENTE DE FECHA (Evitar nacimiento)
-        # Busca una fecha que esté cerca de la palabra "Estudio" o "Fecha"
+        # BUSQUEDA INTELIGENTE DE FECHA (Prioriza "Fecha de estudio")
         f_estudio = re.search(r"(?:Fecha|Estudio|Realizado)\s*[:=-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", t, re.I)
         if f_estudio: 
             d["fecha"] = f_estudio.group(1)
         else:
-            # Si no encuentra la palabra clave, busca cualquier fecha pero que NO sea 1951 (ejemplo)
+            # Si no hay palabra clave, busca cualquier fecha que no sea el nacimiento (1951)
             todas = re.findall(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", t)
-            for f en todas:
-                if "1951" not in f: # Filtro simple para evitar la de nacimiento
+            for f in todas:
+                if "1951" not in f:
                     d["fecha"] = f
                     break
 
@@ -54,37 +53,4 @@ def docx(rep, dt, pdf_b):
     
     doc.add_paragraph("\n")
     for l in rep.split('\n'):
-        l = l.strip().replace('*', '').replace('"', '')
-        if not l or any(x in l.lower() for x in ["presento", "pastore", "resumen", "importante"]): continue
-        p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        if any(l.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]): p.add_run(l).bold = True
-        else: p.add_run(l)
-    
-    f = doc.add_paragraph()
-    f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
-    
-    if pdf_b:
-        try:
-            with fitz.open(stream=pdf_b, filetype="pdf") as dp:
-                ims = [dp.extract_image(i[0])["image"] for p in dp for i in p.get_images()]
-                if ims:
-                    doc.add_page_break()
-                    ti = doc.add_table(rows=(len(ims)+1)//2, cols=2)
-                    for i, m in enumerate(ims):
-                        c = ti.cell(i//2, i%2).paragraphs[0]
-                        c.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        c.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
-        except: pass
-    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
-
-st.set_page_config(page_title="CardioPro 39.0", layout="wide")
-st.title("❤️ CardioReport Pro v39.0")
-u1 = st.file_uploader("1. TXT", type=["txt", "html"])
-u2 = st.file_uploader("2. PDF", type=["pdf"])
-ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
-
-if u1 and u2 and ak:
-    dt = motor(u1.read().decode("latin-1", errors="ignore"))
-    st.subheader("🔍 VALIDACIÓN DE DATOS")
-    v1, v2, v3 = st.
+        l = l.strip().replace('*
