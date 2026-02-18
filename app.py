@@ -49,7 +49,4 @@ def docx(rep, dt, imgs):
         else: p.add_run(l)
     doc.add_paragraph("\n")
     f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
-    if imgs:
-        doc.add_page_break()
-        ti = doc.add_table(rows=(len(imgs)+1)//2, cols
+    f.add_run("__________________________\nDr. FRANCISCO
