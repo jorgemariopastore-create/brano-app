@@ -8,53 +8,38 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. MOTOR DE EXTRACCIÓN DINÁMICO (Para cualquier paciente) ---
+# --- 1. MOTOR DE EXTRACCIÓN DINÁMICO ---
 def motor_universal(texto):
-    # Valores base (se sobreescriben si se encuentran en el TXT)
     info = {
         "paciente": "No detectado", "edad": "", 
         "peso": "70", "altura": "170", 
         "fey": "55", "ddvi": "50", "sep": "10", "par": "10"
     }
-    
     if texto:
-        # Nombre: busca "Patient Name" o similar
         n = re.search(r"Patient Name\s*:\s*(.*)", texto, re.I)
         if n: info["paciente"] = n.group(1).strip()
-        
-        # Edad: busca "Age"
         e = re.search(r"Age\s*:\s*(\d+)", texto, re.I)
         if e: info["edad"] = e.group(1).strip()
-
-        # Peso y Altura
         p = re.search(r"Weight\s*:\s*([\d\.]+)", texto, re.I)
         if p: info["peso"] = p.group(1)
         a = re.search(r"Height\s*:\s*([\d\.]+)", texto, re.I)
         if a: info["altura"] = a.group(1)
-
-        # FEy: busca el patrón de resultado del SonoScape (como el 49.2 de Alicia)
-        # o cualquier valor con unidad %
         f = re.search(r"resultNo\s*=\s*1.*?value\s*=\s*([\d\.,]+)", texto, re.DOTALL)
-        if f: 
-            info["fey"] = f.group(1).replace(',', '.')
-        else:
-            porcent = re.findall(r"value\s*=\s*([\d\.,]+)\s*displayUnit\s*=\s*%", texto)
-            if porcent: info["fey"] = porcent[0].replace(',', '.')
-            
+        if f: info["fey"] = f.group(1).replace(',', '.')
     return info
 
-# --- 2. GENERADOR DE WORD (Estructura Fija de Reporte) ---
+# --- 2. GENERADOR DE WORD (TEXTO JUSTIFICADO Y LIMPIO) ---
 def crear_word_profesional(texto_ia, datos_v, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
     
-    # Título Principal
+    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Tabla de Datos del Paciente
+    # Tabla de Datos
     table_adm = doc.add_table(rows=2, cols=3)
     table_adm.style = 'Table Grid'
     c0 = table_adm.rows[0].cells
@@ -71,7 +56,7 @@ def crear_word_profesional(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Tabla Técnica de Mediciones
+    # Tabla Técnica
     doc.add_paragraph("MEDICIONES ECOCARDIOGRÁFICAS").bold = True
     table_med = doc.add_table(rows=4, cols=2)
     table_med.style = 'Table Grid'
@@ -87,10 +72,12 @@ def crear_word_profesional(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Texto de la IA (Secciones I a IV)
+    # Texto de la IA - JUSTIFICADO
     for linea in texto_ia.split('\n'):
-        if not linea.strip(): continue
+        linea = linea.strip()
+        if not linea: continue
         p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # <--- JUSTIFICACIÓN
         if any(h in linea.upper() for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
             p.add_run(linea.replace("**", "")).bold = True
         else:
@@ -102,7 +89,7 @@ def crear_word_profesional(texto_ia, datos_v, pdf_bytes):
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo\nMN 74144").bold = True
 
-    # Anexo de Imágenes (Extrae todas las fotos del PDF)
+    # Anexo de Imágenes
     if pdf_bytes:
         doc.add_page_break()
         doc.add_paragraph("ANEXO DE IMÁGENES").bold = True
@@ -120,30 +107,21 @@ def crear_word_profesional(texto_ia, datos_v, pdf_bytes):
     doc.save(buf)
     return buf.getvalue()
 
-# --- 3. INTERFAZ DE USUARIO (UI) ---
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("❤️ CardioReport Pro v24")
+# --- 3. INTERFAZ ---
+st.title("❤️ CardioReport Pro v25")
 
-col_left, col_right = st.columns(2)
-with col_left:
-    u_txt = st.file_uploader("1. Subir Reporte TXT (SonoScape)", type=["txt"])
-with col_right:
-    u_pdf = st.file_uploader("2. Subir PDF con Imágenes", type=["pdf"])
-
-api_key = st.secrets.get("GROQ_API_KEY") or st.text_input("3. Ingresar Groq API Key", type="password")
+u_txt = st.file_uploader("1. Subir Reporte TXT", type=["txt"])
+u_pdf = st.file_uploader("2. Subir PDF con Imágenes", type=["pdf"])
+api_key = st.secrets.get("GROQ_API_KEY") or st.text_input("Groq API Key", type="password")
 
 if u_txt and u_pdf and api_key:
-    # Leemos el archivo actual
     texto_sucio = u_txt.read().decode("latin-1", errors="ignore")
     info_auto = motor_universal(texto_sucio)
     
-    st.markdown("---")
-    st.subheader("📝 Validar Datos del Paciente Actual")
-    st.info("El sistema detectó estos valores. Podés editarlos antes de generar el informe.")
-    
+    st.subheader("📝 Validar Datos")
     c1, c2, c3 = st.columns(3)
     with c1:
-        nom_f = st.text_input("Nombre del Paciente", info_auto["paciente"])
+        nom_f = st.text_input("Paciente", info_auto["paciente"])
         pes_f = st.text_input("Peso (kg)", info_auto["peso"])
     with c2:
         eda_f = st.text_input("Edad", info_auto["edad"])
@@ -152,42 +130,23 @@ if u_txt and u_pdf and api_key:
         fey_f = st.text_input("FEy (%)", info_auto["fey"])
         ddvi_f = st.text_input("DDVI (mm)", info_auto["ddvi"])
     
-    # El botón se define aquí, asegurando que tiene acceso a todas las variables
     if st.button("🚀 GENERAR INFORME MÉDICO", type="primary"):
-        with st.spinner("El Dr. Pastore está analizando los datos..."):
-            try:
-                client = Groq(api_key=api_key)
-                prompt_medico = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE, MÉDICO CARDIÓLOGO.
-                Genera un informe técnico de ECOCARDIOGRAMA para {nom_f}.
-                DATOS TÉCNICOS: FEy {fey_f}%, DDVI {ddvi_f}mm.
-                
-                ESTRUCTURA:
-                I. ANATOMÍA: Describe dimensiones de cavidades y espesores.
-                II. FUNCIÓN VENTRICULAR: Analiza la FEy de {fey_f}% (indicar disfunción si es < 55%).
-                III. HEMODINÁMICA: Doppler de flujos valvulares.
-                IV. CONCLUSIÓN.
-                """
-                
-                respuesta = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt_medico}], temperature=0)
-                texto_final = respuesta.choices[0].message.content
-                
-                st.markdown("### Vista Previa del Informe")
-                st.write(texto_final)
-                
-                # Preparamos el Word
-                datos_para_word = {
-                    "paciente": nom_f, "edad": eda_f, "peso": pes_f, 
-                    "altura": alt_f, "fey": fey_f, "ddvi": ddvi_f, 
-                    "sep": info_auto["sep"], "par": info_auto["par"]
-                }
-                archivo_word = crear_word_profesional(texto_final, datos_para_word, u_pdf.getvalue())
-                
-                st.download_button(
-                    label="📥 DESCARGAR INFORME EN WORD",
-                    data=archivo_word,
-                    file_name=f"Informe_Eco_{nom_f.replace(' ', '_')}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-            except Exception as e:
-                st.error(f"Error al conectar con la IA: {e}")
+        client = Groq(api_key=api_key)
+        # PROMPT RESTRINGIDO PARA EVITAR RECOMENDACIONES Y CAPÍTULOS EXTRAS
+        prompt_medico = f"""
+        ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta el informe para {nom_f}.
+        DATOS: FEy {fey_f}%, DDVI {ddvi_f}mm.
+        
+        REGLAS ESTRICTAS:
+        1. Solo secciones I. ANATOMÍA, II. FUNCIÓN, III. HEMODINÁMICA y IV. CONCLUSIÓN.
+        2. NO incluyas sección de 'Recomendaciones' ni ningún capítulo final adicional.
+        3. El informe debe ser puramente descriptivo y técnico.
+        """
+        
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt_medico}], temperature=0)
+        texto_final = res.choices[0].message.content
+        st.info(texto_final)
+        
+        word_bin = crear_word_profesional(texto_final, {"paciente": nom_f, "edad": eda_f, "peso": pes_f, "altura": alt_f, "fey": fey_f, "ddvi": ddvi_f, "sep": info_auto["sep"], "par": info_auto["par"]}, u_pdf.getvalue())
+        
+        st.download_button("📥 DESCARGAR INFORME EN WORD", word_bin, f"Informe_{nom_f}.docx")
