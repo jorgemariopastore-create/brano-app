@@ -17,13 +17,20 @@ archivo_datos = st.file_uploader("1. Reporte de Datos (TXT o DOCX)", type=["txt"
 archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
-def extraer_valor_preciso(texto, etiqueta):
-    # Busca la etiqueta y el valor numérico siguiente, sin importar el desorden
-    patron = re.compile(rf"{re.escape(etiqueta)}.*?value\s*=\s*([\d\.,]+)", re.DOTALL | re.IGNORECASE)
-    match = patron.search(texto)
-    if match:
-        valor = match.group(1).replace(',', '.')
-        return valor if valor != "******" else "No evaluado"
+def extraer_valor_universal(texto, etiquetas):
+    """
+    Busca entre varias etiquetas posibles y extrae el valor numérico 
+    más cercano al texto encontrado.
+    """
+    for etiqueta in etiquetas:
+        # Busca la etiqueta y captura el primer número que aparezca después de 'value =' 
+        # o simplemente después de la etiqueta en un rango de 50 caracteres
+        patron = re.compile(rf"{re.escape(etiqueta)}.*?(?:value\s*=\s*)?([\d\.,]+)", re.DOTALL | re.IGNORECASE)
+        match = patron.search(texto)
+        if match:
+            valor = match.group(1).replace(',', '.')
+            if valor and valor != "******" and not valor.startswith('.'):
+                return valor
     return "No evaluado"
 
 def generar_docx_profesional(texto, pdf_bytes):
@@ -38,7 +45,7 @@ def generar_docx_profesional(texto, pdf_bytes):
 
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea or any(x in linea.lower() for x in ["nota:", "disculpas", "advertencia"]): continue
+        if not linea or any(x in linea.lower() for x in ["nota:", "disculpas", "advertencia", "proporcionan"]): continue
         p = doc.add_paragraph()
         if any(h in linea.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
             p.add_run(linea.replace("**", "")).bold = True
@@ -80,36 +87,45 @@ def generar_docx_profesional(texto, pdf_bytes):
 if archivo_datos and archivo_pdf and api_key:
     if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Escaneando datos del nuevo paciente..."):
+            with st.spinner("Escaneando datos del estudio..."):
                 if archivo_datos.name.endswith('.docx'):
                     texto_crudo = docx2txt.process(archivo_datos)
                 else:
                     texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
 
-                # EXTRACCIÓN DINÁMICA (Sin valores fijos de respaldo)
-                ddvi = extraer_valor_preciso(texto_crudo, "LVID(d)")
-                dsvi = extraer_valor_preciso(texto_crudo, "LVID(s)")
-                septum = extraer_valor_preciso(texto_crudo, "IVS(d)")
-                pared = extraer_valor_preciso(texto_crudo, "LVPW(d)")
-                fey = extraer_valor_preciso(texto_crudo, "EF(Teich)")
-                fa = extraer_valor_preciso(texto_crudo, "FS(Teich)")
+                # BÚSQUEDA MULTI-ETIQUETA (Para que sirva para cualquier paciente)
+                ddvi = extraer_valor_universal(texto_crudo, ["LVID(d)", "LVIDd", "DDVI"])
+                dsvi = extraer_valor_universal(texto_crudo, ["LVID(s)", "LVIDs", "DSVI"])
+                septum = extraer_valor_universal(texto_crudo, ["IVS(d)", "IVSd", "Septum"])
+                pared = extraer_valor_universal(texto_crudo, ["LVPW(d)", "LVPWd", "Pared"])
+                fey = extraer_valor_universal(texto_crudo, ["EF(Teich)", "EF", "FEy"])
+                fa = extraer_valor_universal(texto_crudo, ["FS(Teich)", "FS", "FA"])
 
                 client = Groq(api_key=api_key)
+                # Prompt mejorado para forzar a la IA a no dudar
                 prompt = f"""
-                ERES EL DR. FRANCISCO ALBERTO PASTORE. 
-                Extrae el Nombre, Edad, Peso y Altura del bloque [PATINET INFO] del texto abajo.
-                Usa estos valores técnicos detectados:
-                DDVI: {ddvi} mm, DSVI: {dsvi} mm, Septum: {septum} mm, Pared: {pared} mm, FEy: {fey} %, FA: {fa} %.
-
-                ESTRUCTURA DEL INFORME:
-                DATOS DEL PACIENTE: (Nombre, Edad, Peso, Altura)
-                I. EVALUACIÓN ANATÓMICA
-                II. FUNCIÓN VENTRICULAR
-                III. EVALUACIÓN HEMODINÁMICA
-                IV. CONCLUSIÓN (Si FEy >= 55%: Función conservada)
+                ERES EL DR. FRANCISCO ALBERTO PASTORE.
+                Tu tarea es redactar el informe médico basado en los datos técnicos.
                 
-                TEXTO CRUDO DEL EQUIPO:
-                {texto_crudo[:15000]}
+                VALORES EXTRAÍDOS:
+                - DDVI: {ddvi} mm
+                - DSVI: {dsvi} mm
+                - Septum: {septum} mm
+                - Pared: {pared} mm
+                - FEy: {fey} %
+                - FA: {fa} %
+
+                DATOS PACIENTE: Busca el nombre y datos en:
+                {texto_crudo[:2000]}
+
+                ESTRUCTURA OBLIGATORIA:
+                DATOS DEL PACIENTE:
+                I. EVALUACIÓN ANATÓMICA: (Menciona los diámetros y espesores arriba indicados)
+                II. FUNCIÓN VENTRICULAR: (Menciona la FEy y FA)
+                III. EVALUACIÓN HEMODINÁMICA: (Si no hay datos, pon 'Sin particularidades')
+                IV. CONCLUSIÓN: (Si FEy >= 55%: 'Función ventricular izquierda conservada')
+                
+                REGLAS: NO uses frases como 'No se proporcionan detalles'. Si tienes los números arriba, úsalos.
                 """
                 
                 resp = client.chat.completions.create(
@@ -122,7 +138,7 @@ if archivo_datos and archivo_pdf and api_key:
                 st.info(resultado)
                 
                 docx_out = generar_docx_profesional(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Informe", docx_out, f"Informe_{archivo_datos.name}.docx")
+                st.download_button("📥 Descargar Informe Word", docx_out, f"Informe_{archivo_datos.name}.docx")
                 
         except Exception as e:
             st.error(f"Error: {e}")
