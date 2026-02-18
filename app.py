@@ -4,11 +4,11 @@ from groq import Groq
 import fitz  # PyMuPDF
 import io
 import docx2txt
+import re
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 1. Configuración de la interfaz
 st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
@@ -17,19 +17,27 @@ archivo_datos = st.file_uploader("1. Reporte de Datos (TXT o DOCX)", type=["txt"
 archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
 api_key = st.secrets.get("GROQ_API_KEY")
 
+def extraer_valor_tecnico(texto, etiqueta):
+    """
+    Busca una etiqueta (ej. LVIDd) y extrae el primer valor numérico 
+    que aparezca en las líneas siguientes.
+    """
+    patron = re.compile(rf"{etiqueta}.*?value\s*=\s*([\d\.]+)", re.DOTALL)
+    match = patron.search(texto)
+    return match.group(1) if match else "No evaluado"
+
 def generar_docx(texto, pdf_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
-    
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
     for linea in texto.split('\n'):
         linea = linea.strip()
-        if not linea or any(x in linea.lower() for x in ["nota:", "importante", "descargo"]): continue
+        if not linea: continue
         p = doc.add_paragraph()
         if any(h in linea.upper() for h in ["DATOS", "I.", "II.", "III.", "IV.", "FIRMA"]):
             p.add_run(linea.replace("**", "")).bold = True
@@ -50,45 +58,45 @@ def generar_docx(texto, pdf_bytes):
     return buf.getvalue()
 
 if archivo_datos and archivo_pdf and api_key:
-    if st.button("🚀 GENERAR INFORME SIN ERRORES"):
+    if st.button("🚀 GENERAR INFORME DE PRECISIÓN"):
         try:
-            with st.spinner("Escaneando parámetros técnicos de Silvia Schmidt..."):
+            with st.spinner("Realizando escaneo de valores..."):
                 if archivo_datos.name.endswith('.docx'):
                     texto_crudo = docx2txt.process(archivo_datos)
                 else:
                     texto_crudo = archivo_datos.read().decode("latin-1", errors="ignore")
 
+                # ESCANEO AUTOMÁTICO (Python encuentra los datos, no la IA)
+                ddvi = extraer_valor_tecnico(texto_crudo, "LVIDd")
+                dsvi = extraer_valor_tecnico(texto_crudo, "LVIDs")
+                septum = extraer_valor_tecnico(texto_crudo, "IVSd")
+                pared = extraer_valor_tecnico(texto_crudo, "LVPWd")
+                fey = extraer_valor_tecnico(texto_crudo, "EF\(Teich\)")
+                if fey == "No evaluado": fey = extraer_valor_tecnico(texto_crudo, "EF")
+                fa = extraer_valor_tecnico(texto_crudo, "FS")
+
                 client = Groq(api_key=api_key)
                 
-                # PROMPT DE EXTRACCIÓN AGRESIVA
+                # Le pasamos los datos ya encontrados para que no se equivoque
                 prompt = f"""
-                ERES EL DR. PASTORE. USA ESTA GUÍA DE TRADUCCIÓN PARA EL ARCHIVO TXT:
-                - LVIDd o LVID(d) es el DDVI.
-                - LVIDs o LVID(s) es el DSVI.
-                - IVSd es el Septum.
-                - LVPWd es la Pared Posterior.
-                - EF o EF(Teich) es la FEy.
-                - FS es la FA.
-                - E/A y E/E' están en la sección Doppler.
-
-                TAREAS:
-                1. Extrae Nombre, Edad, Peso, Altura del inicio ([PATINET INFO]).
-                2. Busca los valores numéricos de las siglas mencionadas arriba. 
-                3. Si el valor es '******', di 'No evaluado'. Si hay un número, ÚSALO.
-                4. CONCLUSIÓN: Si FEy >= 55%, "Función ventricular conservada".
-
-                PROHIBIDO: No digas "No disponible" si el número está en el texto. No pongas notas finales.
+                ERES EL DR. FRANCISCO ALBERTO PASTORE. 
+                Redacta el informe usando ESTOS VALORES que ya fueron extraídos:
                 
-                ESTRUCTURA:
-                DATOS DEL PACIENTE:
-                I. EVALUACIÓN ANATÓMICA:
-                II. FUNCIÓN VENTRICULAR:
-                III. EVALUACIÓN HEMODINÁMICA:
-                IV. CONCLUSIÓN:
-                Firma: Dr. FRANCISCO ALBERTO PASTORE - MN 74144
+                PACIENTE: Silvia Schmidt (Extrae Edad, Peso y Altura del texto abajo)
+                DDVI: {ddvi} mm
+                DSVI: {dsvi} mm
+                SEPTUM: {septum} mm
+                PARED: {pared} mm
+                FEy: {fey} %
+                FA: {fa} %
 
-                TEXTO TÉCNICO:
-                {texto_crudo}
+                INSTRUCCIONES:
+                1. Usa el formato de secciones I, II, III, IV.
+                2. En Conclusión: si FEy es >= 55%, "Función ventricular conservada".
+                3. No inventes datos de Doppler si no están claros.
+                
+                TEXTO COMPLETO PARA OTROS DATOS:
+                {texto_crudo[:5000]}
                 """
                 
                 resp = client.chat.completions.create(
