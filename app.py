@@ -8,9 +8,8 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. MOTOR DE EXTRACCIÓN UNIVERSAL (No forzado) ---
+# --- 1. MOTOR DE EXTRACCIÓN UNIVERSAL ---
 def motor_v35_1(texto):
-    # Valores por defecto vacíos para evitar arrastrar datos de otros pacientes
     info = {
         "paciente": "", 
         "edad": "74", 
@@ -21,51 +20,42 @@ def motor_v35_1(texto):
         "drao": "32",
         "ddai": "32"
     }
-    
     if texto:
-        # Busca cualquier nombre después de "Paciente:", "Name:" o "Nombre:"
         n = re.search(r"(?:Patient Name|Name|Nombre|PACIENTE)\s*[:=-]\s*([^<\r\n]*)", texto, re.I)
         if n: info["paciente"] = n.group(1).replace(',', '').strip()
-        
-        # Busca la Fracción de Eyección (FEy / EF)
         f = re.search(r"(?:EF|FEy|Fracción de Eyección).*?([\d\.,]+)", texto, re.I)
         if f: info["fey"] = f.group(1).replace(',', '.')
-        
-        # Busca el Diámetro Diastólico (DDVI / LVIDd)
         d = re.search(r"(?:LVIDd|DDVI).*?([\d\.,]+)", texto, re.I)
         if d: info["ddvi"] = d.group(1).replace(',', '.')
-
     return info
 
-# --- 2. GENERADOR DE WORD (ESTILO PASTORE ESPEJO) ---
+# --- 2. GENERADOR DE WORD ---
 def crear_word_final(texto_ia, datos_v, pdf_bytes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     doc.styles['Normal'].font.size = Pt(10)
     
-    # Encabezado centrado
+    # Título
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Tabla de Identificación del Paciente
+    # Tabla Identificación
     table = doc.add_table(rows=2, cols=3)
     table.style = 'Table Grid'
-    c0 = table.rows[0].cells
-    c0[0].text = f"PACIENTE: {datos_v['paciente']}"
-    c0[1].text = f"EDAD: {datos_v['edad']} años"
-    c0[2].text = f"FECHA: 13/02/2026"
-    c1 = table.rows[1].cells
-    c1[0].text = f"PESO: {datos_v['peso']} kg"
-    c1[1].text = f"ALTURA: {datos_v['altura']} cm"
+    table.rows[0].cells[0].text = f"PACIENTE: {datos_v['paciente']}"
+    table.rows[0].cells[1].text = f"EDAD: {datos_v['edad']} años"
+    table.rows[0].cells[2].text = f"FECHA: 13/02/2026"
+    table.rows[1].cells[0].text = f"PESO: {datos_v['peso']} kg"
+    table.rows[1].cells[1].text = f"ALTURA: {datos_v['altura']} cm"
     try:
-        bsa = ( (float(datos_v['peso']) * float(datos_v['altura'])) / 3600 )**0.5
-        c1[2].text = f"BSA: {bsa:.2f} m²"
-    except: c1[2].text = "BSA: --"
+        bsa = ((float(datos_v['peso']) * float(datos_v['altura'])) / 3600)**0.5
+        table.rows[1].cells[2].text = f"BSA: {bsa:.2f} m²"
+    except: table.rows[1].cells[2].text = "BSA: --"
 
     doc.add_paragraph("\n")
 
-    # Cuadro Técnico de Mediciones
+    # Tabla Hallazgos
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
@@ -82,9 +72,9 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Cuerpo del Informe (Texto de la IA Justificado)
+    # Texto del Informe
     for linea in texto_ia.split('\n'):
-        linea = linea.strip().replace('"', '') # Limpieza de comillas
+        linea = linea.strip().replace('"', '')
         if not linea or "informe" in linea.lower(): continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -93,11 +83,62 @@ def crear_word_final(texto_ia, datos_v, pdf_bytes):
         else:
             p.add_run(linea)
 
-    # Firma a la Derecha
+    # Firma
     doc.add_paragraph("\n")
     f = doc.add_paragraph()
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
-    # Anexo de Imágenes
+    # --- BLOQUE DE IMÁGENES (CORREGIDO) ---
     if pdf_bytes:
+        doc.add_page_break()
+        doc.add_paragraph("ANEXO DE IMÁGENES").bold = True
+        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        imgs = []
+        for page in pdf:
+            for img in page.get_images(full=True):
+                xref = img[0]
+                base_image = pdf.extract_image(xref)
+                imgs.append(base_image["image"])
+        
+        if imgs:
+            t_i = doc.add_table(rows=(len(imgs)+1)//2, cols=2)
+            for i, d in enumerate(imgs):
+                cp = t_i.cell(i//2, i%2).paragraphs[0]
+                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cp.add_run().add_picture(io.BytesIO(d), width=Inches(2.3))
+        pdf.close()
+    
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+# --- 3. INTERFAZ ---
+st.set_page_config(page_title="CardioReport Pro v35.1", layout="wide")
+st.title("❤️ CardioReport Pro v35.1")
+
+u_txt = st.file_uploader("1. Subir TXT/HTML del Ecógrafo", type=["txt", "html"])
+u_pdf = st.file_uploader("2. Subir PDF con Capturas", type=["pdf"])
+api_key = st.secrets.get("GROQ_API_KEY") or st.text_input("3. Ingrese Groq API Key", type="password")
+
+if u_txt and u_pdf and api_key:
+    raw_content = u_txt.read().decode("latin-1", errors="ignore")
+    info_auto = motor_v35_1(raw_content)
+    
+    st.markdown("---")
+    st.subheader("📝 Validar y Editar Datos")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        nom_f = st.text_input("Paciente", info_auto["paciente"])
+        pes_f = st.text_input("Peso", info_auto["peso"])
+    with c2:
+        eda_f = st.text_input("Edad", info_auto["edad"])
+        alt_f = st.text_input("Altura", info_auto["altura"])
+    with c3:
+        fey_f = st.text_input("FEy (%)", info_auto["fey"])
+        ddvi_f = st.text_input("DDVI (mm)", info_auto["ddvi"])
+
+    if st.button("🚀 GENERAR INFORME CARDIOLÓGICO", type="primary"):
+        client = Groq(api_key=api_key)
+        prompt_medico = f"""
+        ERES EL DR. FRANCISCO ALBERTO PASTORE. Redacta un
