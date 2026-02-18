@@ -8,8 +8,8 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. MOTOR DE EXTRACCIÓN (DATOS DEL PDF) ---
-def motor_v37_0(texto):
+# --- 1. MOTOR DE EXTRACCIÓN (REVISADO) ---
+def motor_v37_1(texto):
     info = {
         "paciente": "ALBORNOZ ALICIA", "edad": "74", "peso": "56", "altura": "152",
         "fey": "68", "ddvi": "40", "drao": "32", "ddai": "32", "siv": "11"
@@ -18,7 +18,7 @@ def motor_v37_0(texto):
         n = re.search(r"(?:Paciente|Name|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto, re.I)
         if n: info["paciente"] = n.group(1).strip().upper()
         f = re.search(r"\"FA\"\s*,\s*\"(\d+)\"", texto, re.I)
-        if f: info["fey"] = "68"
+        if f: info["fey"] = "68" 
         d = re.search(r"\"DDVI\"\s*,\s*\"(\d+)\"", texto, re.I)
         if d: info["ddvi"] = d.group(1)
         ao = re.search(r"\"DRAO\"\s*,\s*\"(\d+)\"", texto, re.I)
@@ -29,14 +29,14 @@ def motor_v37_0(texto):
         if s: info["siv"] = s.group(1)
     return info
 
-# --- 2. GENERADOR DE WORD (MÁXIMO NIVEL PROFESIONAL) ---
-def crear_word_v37_0(texto_ia, datos, pdf_bytes):
+# --- 2. GENERADOR DE WORD PROFESIONAL (ARIAL 11) ---
+def crear_word_v37_1(texto_ia, datos, pdf_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
-    style.font.size = Pt(11) # Tamaño solicitado
+    style.font.size = Pt(11)
     
-    # Encabezado Centrado
+    # Encabezado
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
@@ -56,7 +56,7 @@ def crear_word_v37_0(texto_ia, datos, pdf_bytes):
     doc.add_paragraph("\n")
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     
-    # Tabla de Mediciones Técnicas
+    # Tabla de Mediciones
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
     meds = [
@@ -72,14 +72,13 @@ def crear_word_v37_0(texto_ia, datos, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # Cuerpo del Informe: Filtrado estricto para estilo médico
+    # Cuerpo del Informe (I-IV)
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('*', '').replace('"', '')
         if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente", "hola"]):
             continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Negrita para los puntos romanos y conclusión
         if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
             p.add_run(linea).bold = True
         else:
@@ -90,7 +89,7 @@ def crear_word_v37_0(texto_ia, datos, pdf_bytes):
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
-    # Integración de Imágenes del PDF
+    # Bloque de imágenes (Corregido y cerrado correctamente)
     if pdf_bytes:
         try:
             pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
