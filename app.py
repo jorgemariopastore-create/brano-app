@@ -7,24 +7,35 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 def motor(t, pdf_bytes):
-    # Valores por defecto
-    d = {"pac": "ALBORNOZ ALICIA", "ed": "74", "fy": "68", "dv": "40", "dr": "32", "ai": "32", "si": "11", "fecha": "13/02/2026"}
+    # Valores iniciales vacíos para forzar la lectura nueva
+    d = {"pac": "", "ed": "", "fy": "60", "dv": "", "dr": "", "ai": "", "si": "", "fecha": ""}
     
-    # 1. Intentar sacar la fecha del PDF (Más preciso)
+    # 1. Extraer Fecha y Datos del PDF
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc_p:
             texto_p = doc_p[0].get_text()
+            # Buscar fecha
             f_pdf = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", texto_p)
             if f_pdf: d["fecha"] = f_pdf.group(1)
+            # Buscar nombre en PDF si no está en TXT
+            n_pdf = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto_p, re.I)
+            if n_pdf: d["pac"] = n_pdf.group(1).strip().upper()
     except: pass
 
-    # 2. Extraer datos del texto (TXT/HTML)
+    # 2. Extraer datos del TXT/HTML (Sobrescribe lo anterior si encuentra datos)
     if t:
-        n = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\r\n]*)", t, re.I)
-        if n: d["pac"] = n.group(1).strip().upper()
+        n_txt = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\r\n]*)", t, re.I)
+        if n_txt: d["pac"] = n_txt.group(1).strip().upper()
+        
+        # Mapeo de valores técnicos
         for k, p in [("dv","DDVI"), ("dr","DRAO"), ("ai","DDAI"), ("si","DDSIV"), ("fy","FA")]:
             m = re.search(rf"\"{p}\"\s*,\s*\"(\d+)\"", t, re.I)
             if m: d[k] = m.group(1)
+            
+        # Edad
+        ed = re.search(r"Edad\s*[:=-]?\s*(\d+)", t, re.I)
+        if ed: d["ed"] = ed.group(1)
+            
     return d
 
 def docx(rep, dt, ims):
@@ -45,7 +56,6 @@ def docx(rep, dt, ims):
         b2.cell(i,0).text, b2.cell(i,1).text = n, v
     
     doc.add_paragraph("\n")
-    # Tono Médico Profesional Restaurado
     for l in rep.split('\n'):
         l = l.strip().replace('*', '').replace('"', '')
         if not l or any(x in l.lower() for x in ["pastore", "resumen", "nota"]): continue
@@ -65,30 +75,32 @@ def docx(rep, dt, ims):
             c.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-st.set_page_config(page_title="CardioPro 40.0", layout="wide")
-st.title("❤️ CardioReport Pro v40.0")
+st.set_page_config(page_title="CardioPro 40.2", layout="wide")
+st.title("❤️ CardioReport Pro v40.2")
 
-u1 = st.file_uploader("1. TXT/HTML", type=["txt", "html"])
-u2 = st.file_uploader("2. PDF (Imágenes y Fecha)", type=["pdf"])
+u1 = st.file_uploader("1. Cargar TXT/HTML del nuevo paciente", type=["txt", "html"])
+u2 = st.file_uploader("2. Cargar PDF del nuevo paciente", type=["pdf"])
 ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
 
 if u1 and u2 and ak:
+    # Reset de archivos si se suben nuevos
     t_raw = u1.read().decode("latin-1", errors="ignore")
     dt = motor(t_raw, u2.getvalue())
     
-    st.subheader("🔍 VALIDACIÓN DE DATOS")
+    st.subheader("🔍 VALIDACIÓN: Verifique los datos del NUEVO paciente")
     c1, c2, c3 = st.columns(3)
-    p = c1.text_input("Paciente", dt["pac"])
-    f = c1.text_input("FEy %", dt["fy"])
-    e = c2.text_input("Edad", dt["ed"])
-    d = c2.text_input("DDVI mm", dt["dv"])
-    fe = c3.text_input("Fecha Estudio", dt["fecha"])
-    s = c3.text_input("SIV mm", dt["si"])
+    # Los widgets ahora muestran lo que el motor encuentra en tiempo real
+    p_nom = c1.text_input("Nombre Paciente", dt["pac"])
+    f_ey = c1.text_input("FEy %", dt["fy"])
+    e_dad = c2.text_input("Edad", dt["ed"])
+    d_dvi = c2.text_input("DDVI mm", dt["dv"])
+    f_ech = c3.text_input("Fecha del Informe", dt["fecha"])
+    s_iv = c3.text_input("SIV mm", dt["si"])
     
-    if st.button("🚀 GENERAR INFORME MÉDICO"):
+    if st.button("🚀 GENERAR INFORME"):
         cl = Groq(api_key=ak)
-        # Prompt Profesional Original
-        px = f"Redacta un informe médico técnico y conciso. No incluyas introducciones ni resúmenes. Estructura: I. ANATOMÍA: Raíz aórtica ({dt['dr']}mm) y aurícula izquierda normales. Cavidades con espesores conservados (SIV {s}mm). II. FUNCIÓN VENTRICULAR: Función sistólica del VI conservada. FEy {f}%. III. VÁLVULAS Y DOPPLER: Sin alteraciones. IV. CONCLUSIÓN: Estudio normal."
+        # Prompt dinámico con los datos de la validación
+        px = f"Redacta un informe médico técnico. Paciente: {p_nom}. I. ANATOMÍA: Raíz aórtica ({dt['dr']}mm) y aurícula izquierda normales. SIV {s_iv}mm. II. FUNCIÓN: VI conservada. FEy {f_ey}%. III. VÁLVULAS: Sin alteraciones. IV. CONCLUSIÓN: Estudio normal. Estilo seco, sin introducciones."
         rs = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
         rep = rs.choices[0].message.content
         st.info(rep)
@@ -101,5 +113,6 @@ if u1 and u2 and ak:
                         ims.append(dp.extract_image(img[0])["image"])
         except: pass
         
-        w = docx(rep, {"pac":p,"ed":e,"fy":f,"dv":d,"dr":dt['dr'],"si":s,"ai":dt['ai'],"fecha":fe}, ims)
-        st.download_button("📥 DESCARGAR", w, f"{p}.docx")
+        datos_finales = {"pac":p_nom,"ed":e_dad,"fy":f_ey,"dv":d_dvi,"dr":dt['dr'],"si":s_iv,"ai":dt['ai'],"fecha":f_ech}
+        w = docx(rep, datos_finales, ims)
+        st.download_button("📥 DESCARGAR INFORME", w, f"{p_nom}.docx")
