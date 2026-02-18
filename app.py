@@ -8,8 +8,8 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. MOTOR DE EXTRACCIÓN PRECISO ---
-def motor_v36_8(texto):
+# --- 1. MOTOR DE EXTRACCIÓN (REVISADO) ---
+def motor_v36_9(texto):
     info = {
         "paciente": "ALBORNOZ ALICIA", "edad": "74", "peso": "56", "altura": "152",
         "fey": "68", "ddvi": "40", "drao": "32", "ddai": "32", "siv": "11"
@@ -29,21 +29,21 @@ def motor_v36_8(texto):
         if s: info["siv"] = s.group(1)
     return info
 
-# --- 2. GENERADOR DE WORD PROFESIONAL (LETRA 11 Y ROMANOS) ---
-def crear_word_v36_8(texto_ia, datos, pdf_bytes):
+# --- 2. GENERADOR DE WORD PROFESIONAL ---
+def crear_word_v36_9(texto_ia, datos, pdf_bytes):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
-    style.font.size = Pt(11) # Tamaño profesional
+    style.font.size = Pt(11)
     
-    # Título Principal
+    # Encabezado
     t = doc.add_paragraph()
     t.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_t = t.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
     run_t.bold = True
     run_t.font.size = Pt(12)
     
-    # Tabla de Filiación
+    # Tabla de Datos del Paciente
     table = doc.add_table(rows=2, cols=3)
     table.style = 'Table Grid'
     table.rows[0].cells[0].text = f"PACIENTE: {datos['paciente']}"
@@ -56,7 +56,7 @@ def crear_word_v36_8(texto_ia, datos, pdf_bytes):
     doc.add_paragraph("\n")
     doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS").bold = True
     
-    # Tabla de Mediciones
+    # Tabla de Mediciones Técnicas
     table_m = doc.add_table(rows=5, cols=2)
     table_m.style = 'Table Grid'
     meds = [
@@ -72,14 +72,13 @@ def crear_word_v36_8(texto_ia, datos, pdf_bytes):
 
     doc.add_paragraph("\n")
 
-    # CUERPO PROFESIONAL: Filtrado estricto
+    # Cuerpo del Informe con Redacción Médica
     for linea in texto_ia.split('\n'):
         linea = linea.strip().replace('*', '').replace('"', '')
-        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente", "hola", "hallazgos"]):
+        if not linea or any(x in linea.lower() for x in ["presento", "pastore", "basado", "atentamente", "hola"]):
             continue
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Detectar I., II., III., IV. o CONCLUSIÓN
         if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCLUSIÓN"]):
             p.add_run(linea).bold = True
         else:
@@ -90,7 +89,7 @@ def crear_word_v36_8(texto_ia, datos, pdf_bytes):
     f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMédico Cardiólogo - MN 74144").bold = True
 
-    # Imágenes
+    # Procesamiento de imágenes
     if pdf_bytes:
         try:
             pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -108,7 +107,13 @@ def crear_word_v36_8(texto_ia, datos, pdf_bytes):
                     para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     para.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.5))
             pdf.close()
-        except: pass
+        except:
+            pass
     
     buf = io.BytesIO()
     doc.save(buf)
+    return buf.getvalue()
+
+# --- 3. INTERFAZ STREAMLIT (RESTABLECIDA) ---
+st.set_page_config(page_title="CardioReport Pro v36.9", layout="wide")
+st.title("❤️ CardioReport Pro v36
