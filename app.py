@@ -42,15 +42,5 @@ def docx(rep, dt, pdf):
     f.add_run("__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
     if pdf:
         try:
-            p_f = fitz.open(stream=pdf, filetype="pdf")
-            ims = []
-            for pg in p_f:
-                for im in pg.get_images(full=True): ims.append(p_f.extract_image(im[0])["image"])
-            if ims:
-                doc.add_page_break()
-                ti = doc.add_table(rows=(len(ims)+1)//2, cols=2)
-                for i, m_d in enumerate(ims):
-                    pi = ti.cell(i//2, i%2).paragraphs[0]
-                    pi.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    pi.add_run().add_picture(io.BytesIO(m_d), width=Inches(2.4))
-            p_f
+            with fitz.open(stream=pdf, filetype="pdf") as p_f:
+                ims = [p_f.extract_image(img[0])["
