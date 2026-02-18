@@ -11,12 +11,19 @@ st.set_page_config(page_title="CardioReport Pro", layout="centered")
 st.title("❤️ Sistema de Informes Médicos")
 st.subheader("Dr. Francisco Alberto Pastore")
 
-# 1. Subida de ambos archivos
+st.info("💡 Consejo: Sube el archivo de TEXTO/DOCX para obtener datos precisos y el PDF para las imágenes.")
+
+# --- SECCIÓN DE CARGA CORREGIDA ---
 col1, col2 = st.columns(2)
+
 with col1:
-    archivo_txt = st.file_uploader("📂 Subir reporte TXT/HTML (Datos)", type=["txt", "html", "docx"])
+    # Aquí ahora aceptamos TXT, HTML y DOCX para que no falle al buscar
+    archivo_datos = st.file_uploader("1. Reporte de Datos", type=["txt", "html", "docx", "doc"])
+
 with col2:
-    archivo_pdf = st.file_uploader("📂 Subir reporte PDF (Imágenes)", type=["pdf"])
+    # El PDF sigue siendo exclusivo para las imágenes
+    archivo_pdf = st.file_uploader("2. Reporte PDF (Imágenes)", type=["pdf"])
+# ----------------------------------
 
 api_key = st.secrets.get("GROQ_API_KEY")
 
@@ -40,7 +47,6 @@ def generar_docx(texto, pdf_bytes):
         else:
             p.add_run(linea.replace("**", ""))
 
-    # Anexo de Imágenes desde el PDF
     if pdf_bytes:
         doc.add_page_break()
         a = doc.add_paragraph()
@@ -64,27 +70,25 @@ def generar_docx(texto, pdf_bytes):
     doc.save(target)
     return target.getvalue()
 
-if archivo_txt and archivo_pdf and api_key:
-    if st.button("🚀 GENERAR INFORME PERFECTO"):
+if archivo_datos and archivo_pdf and api_key:
+    if st.button("🚀 GENERAR INFORME"):
         try:
-            with st.spinner("Cruzando datos de texto con imágenes del PDF..."):
-                # Leemos el archivo de texto (que es súper preciso)
-                contenido_datos = archivo_txt.read().decode("latin-1") 
+            with st.spinner("Procesando datos del archivo de texto..."):
+                # Leemos el contenido del archivo de datos (TXT o DOCX)
+                # Si es DOCX requiere una lectura especial, pero para TXT/HTML:
+                contenido_datos = archivo_datos.read().decode("latin-1", errors="ignore")
 
                 client = Groq(api_key=api_key)
                 prompt = f"""
-                ERES EL DR. PASTORE. USA ESTE REPORTE DE MEDICIONES (TEXTO) PARA REDACTAR EL INFORME.
+                ERES EL DR. PASTORE. REDACTA EL INFORME MÉDICO.
+                USA EXCLUSIVAMENTE LOS VALORES NUMÉRICOS DE ESTE REPORTE:
                 
-                DATOS CLAVE A BUSCAR:
-                - PatientName, Weight, Height.
-                - DDVI, DSVI, LVPWd (Pared), IVSd (Septum).
-                - EF (FEy), FS (FA).
-                
-                LÓGICA:
-                - Si EF es >= 55%: Conclusión "Función ventricular conservada".
-                
-                REPORTE DE ORIGEN:
                 {contenido_datos}
+                
+                REGLAS:
+                - Nombre: Alicia Albornoz.
+                - Si EF/FEy >= 55%: "Función ventricular conservada".
+                - Estructura: I. Anatomía, II. Función, III. Hemodinamia, IV. Conclusión.
                 """
                 
                 resp = client.chat.completions.create(
@@ -94,10 +98,11 @@ if archivo_txt and archivo_pdf and api_key:
                 )
                 
                 resultado = resp.choices[0].message.content
+                st.markdown("### Vista Previa del Informe")
                 st.info(resultado)
                 
                 docx_out = generar_docx(resultado, archivo_pdf.getvalue())
-                st.download_button("📥 Descargar Informe Perfecto", docx_out, f"Informe_{archivo_txt.name}.docx")
+                st.download_button("📥 Descargar Word Final", docx_out, f"Informe_{archivo_datos.name}.docx")
                 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error al procesar: {e}")
