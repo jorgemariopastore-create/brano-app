@@ -1,106 +1,148 @@
 
 import streamlit as st
 from groq import Groq
-import fitz, io, re, datetime
+import fitz, io, re
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-def motor(t, pdf_bytes):
-    # Valores iniciales vacíos
+def extraer_valor_ecografo(texto, etiqueta_buscada):
+    # Esta función busca el valor numérico en el bloque de medición del ecógrafo
+    patron = rf"{etiqueta_buscada}.*?value\s*=\s*([\d.]+)"
+    match = re.search(patron, texto, re.S | re.I)
+    if match:
+        try:
+            return str(int(float(match.group(1))))
+        except:
+            return match.group(1)
+    return ""
+
+def motor_universal(txt, pdf_bytes):
     d = {"pac": "", "ed": "", "fy": "60", "dv": "", "dr": "", "ai": "", "si": "", "fecha": ""}
     
-    # 1. Extraer del PDF (Fecha y Nombre)
+    # 1. Prioridad: Datos del PDF (Nombre y Fecha)
     try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc_p:
-            texto_p = doc_p[0].get_text()
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            texto_p = doc[0].get_text()
             f_pdf = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", texto_p)
             if f_pdf: d["fecha"] = f_pdf.group(1)
-            n_pdf = re.search(r"Nombre pac\.:\s*([^<\r\n]*)", texto_p, re.I)
+            n_pdf = re.search(r"(?:Nombre pac\.|Paciente)\s*[:=-]?\s*([^<\r\n]*)", texto_p, re.I)
             if n_pdf: d["pac"] = n_pdf.group(1).strip().upper()
     except: pass
 
-    # 2. Extraer del TXT (Medidas con búsqueda flexible)
-    if t:
-        # Búsqueda de Nombre y Edad en el nuevo formato TXT
-        n_txt = re.search(r"PatientName\s*=\s*([^|\r\n]*)", t, re.I)
-        if n_txt: d["pac"] = n_txt.group(1).strip().upper()
-        e_txt = re.search(r"Age\s*=\s*(\d+)", t, re.I)
+    # 2. Datos del TXT (Medidas y Edad)
+    if txt:
+        # Nombre y Edad si no estaban en el PDF
+        if not d["pac"]:
+            n_txt = re.search(r"PatientName\s*=\s*([^|\r\n]*)", txt, re.I)
+            if n_txt: d["pac"] = n_txt.group(1).strip().upper()
+        
+        e_txt = re.search(r"Age\s*=\s*(\d+)", txt, re.I)
         if e_txt: d["ed"] = e_txt.group(1)
 
-        # Búsqueda de medidas técnicas (Buscamos el valor después de la etiqueta)
-        # Este mapa busca las siglas en el reporte de mediciones
-        mapa = [("dv","DDVI"), ("dr","DRAO"), ("ai","DDAI"), ("si","DDSIV"), ("fy","FA")]
-        for k, p in mapa:
-            # Buscamos la etiqueta y luego el siguiente "value = XX.XX"
-            bloque = re.search(rf"{p}.*?value\s*=\s*([\d.]+)", t, re.S | re.I)
-            if bloque: d[k] = str(int(float(bloque.group(1))))
-            
+        # Mapeo de medidas según el formato de los 3 archivos analizados
+        d["dv"] = extraer_valor_ecografo(txt, "DDVI")
+        d["dr"] = extraer_valor_ecografo(txt, "DRAO")
+        d["ai"] = extraer_valor_ecografo(txt, "DDAI")
+        d["si"] = extraer_valor_ecografo(txt, "DDSIV")
+        d["fy"] = extraer_valor_ecografo(txt, "FA") or "60"
+
     return d
 
-def docx(rep, dt, ims):
+def generar_docx(reporte, dt, imagenes):
     doc = Document()
     doc.styles['Normal'].font.name, doc.styles['Normal'].font.size = 'Arial', Pt(11)
-    h = doc.add_paragraph()
-    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    h.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    b1 = doc.add_table(rows=2, cols=3); b1.style = 'Table Grid'
-    ls = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", f"FECHA: {dt['fecha']}", "PESO: 68 kg", "ALTURA: 164 cm", "BSA: 1.78 m²"]
-    for i, x in enumerate(ls): b1.cell(i//3, i%3).text = x
+    # Encabezado
+    tit = doc.add_paragraph()
+    tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    tit.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    doc.add_paragraph("\n")
-    b2 = doc.add_table(rows=5, cols=2); b2.style = 'Table Grid'
-    ms = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
-    for i, (n, v) in enumerate(ms):
-        b2.cell(i,0).text, b2.cell(i,1).text = n, v
+    # Tabla de datos personales
+    t1 = doc.add_table(rows=2, cols=3); t1.style = 'Table Grid'
+    datos = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", f"FECHA: {dt['fecha']}", "PESO: --", "ALTURA: --", "BSA: --"]
+    for i, texto in enumerate(datos): t1.cell(i//3, i%3).text = texto
     
     doc.add_paragraph("\n")
-    for l in rep.split('\n'):
-        l = l.strip().replace('*', '').replace('"', '')
-        if not l or any(x in l.lower() for x in ["pastore", "paciente:", "nombre:"]): continue
+    
+    # Tabla de mediciones
+    t2 = doc.add_table(rows=5, cols=2); t2.style = 'Table Grid'
+    medidas = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
+    for i, (n, v) in enumerate(medidas):
+        t2.cell(i,0).text, t2.cell(i,1).text = n, v
+    
+    doc.add_paragraph("\n")
+    
+    # Cuerpo del informe (formateado por la IA)
+    for linea in reporte.split('\n'):
+        linea = linea.strip().replace('*', '').replace('"', '')
+        if not linea or any(x in linea.lower() for x in ["paciente", "dr.", "mn "]): continue
         p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        if any(l.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]): p.add_run(l).bold = True
-        else: p.add_run(l)
+        if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]):
+            p.add_run(linea).bold = True
+        else:
+            p.add_run(linea)
     
+    # Firma
     f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
+    f.add_run("\n\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
     
-    if ims:
+    # Imágenes si existen
+    if imagenes:
         doc.add_page_break()
-        ti = doc.add_table(rows=(len(ims)+1)//2, cols=2)
-        for i, m in enumerate(ims):
-            c = ti.cell(i//2, i%2).paragraphs[0]
-            c.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            c.add_run().add_picture(io.BytesIO(m), width=Inches(2.4))
+        t_img = doc.add_table(rows=(len(imagenes)+1)//2, cols=2)
+        for i, img_data in enumerate(imagenes):
+            celda = t_img.cell(i//2, i%2).paragraphs[0]
+            celda.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            celda.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.5))
+            
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-st.set_page_config(page_title="CardioPro 40.3", layout="wide")
-st.title("❤️ CardioReport Pro v40.3")
+# --- INTERFAZ STREAMLIT ---
+st.set_page_config(page_title="CardioPro Final", layout="wide")
+st.title("🏥 CardioReport Pro v40.4")
 
-u1 = st.file_uploader("1. Cargar TXT/HTML", type=["txt", "html"])
-u2 = st.file_uploader("2. Cargar PDF", type=["pdf"])
-ak = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("API", type="password")
+c_up1, c_up2 = st.columns(2)
+u1 = c_up1.file_uploader("Archivo TXT/HTML del Ecógrafo", type=["txt", "html"])
+u2 = c_up2.file_uploader("Archivo PDF (Imágenes)", type=["pdf"])
+key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("Groq API Key", type="password")
 
-if u1 and u2 and ak:
-    t_raw = u1.read().decode("latin-1", errors="ignore")
-    dt = motor(t_raw, u2.getvalue())
+if u1 and u2 and key:
+    txt_content = u1.read().decode("latin-1", errors="ignore")
+    datos_extraidos = motor_universal(txt_content, u2.getvalue())
     
-    st.subheader("🔍 VALIDACIÓN DE DATOS")
-    c1, c2, c3 = st.columns(3)
-    p = c1.text_input("Paciente", dt["pac"])
-    f = c1.text_input("FEy %", dt["fy"])
-    e = c2.text_input("Edad", dt["ed"])
-    d = c2.text_input("DDVI mm", dt["dv"])
-    fe = c3.text_input("Fecha Estudio", dt["fecha"])
-    s = c3.text_input("SIV mm", dt["si"])
-    
-    if st.button("🚀 GENERAR INFORME"):
-        cl = Groq(api_key=ak)
-        # Prompt mejorado para NO repetir el nombre
-        px = f"Redacta un informe médico conciso. NO incluyas el nombre del paciente ni introducciones. Empieza directamente en I. ANATOMÍA. Datos: Raíz ({dt['dr']}mm), SIV ({s}mm), FEy ({f}%). Conclusión: Normal."
-        rs = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
-        rep = rs.choices[0].message.content
-        st.info(rep)
+    st.subheader("📋 Validación de Datos del Paciente")
+    col1, col2, col3 = st.columns(3)
+    p_nom = col1.text_input("Nombre", datos_extraidos["pac"])
+    p_fey = col1.text_input("FEy (%)", datos_extraidos["fy"])
+    p_eda = col2.text_input("Edad", datos_extraidos["ed"])
+    p_dvi = col2.text_input("DDVI (mm)", datos_extraidos["dv"])
+    p_fec = col3.text_input("Fecha", datos_extraidos["fecha"])
+    p_siv = col3.text_input("SIV (mm)", datos_extraidos["si"])
+
+    if st.button("🚀 GENERAR INFORME PROFESIONAL"):
+        client = Groq(api_key=key)
+        # Prompt optimizado para evitar repeticiones y mantener estructura técnica
+        prompt = f"""Escribe un informe de ecocardiograma. 
+        ESTRUCTURA OBLIGATORIA: I. ANATOMÍA, II. FUNCIÓN VENTRICULAR, III. VÁLVULAS Y DOPPLER, IV. CONCLUSIÓN.
+        DATOS: DDVI {p_dvi}mm, SIV {p_siv}mm, FEy {p_fey}%. 
+        REGLAS: Solo lenguaje médico. No menciones el nombre del paciente. No saludes. Sé muy breve."""
         
-        ims = []
+        res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":prompt}], temperature=0)
+        texto_ia = res.choices[0].message.content
+        
+        # Extraer imágenes del PDF
+        imgs = []
+        try:
+            with fitz.open(stream=u2.getvalue(), filetype="pdf") as doc_pdf:
+                for pagina in doc_pdf:
+                    for img in pagina.get_images():
+                        imgs.append(doc_pdf.extract_image(img[0])["image"])
+        except: pass
+        
+        st.markdown("---")
+        st.write(texto_ia)
+        
+        dict_final = {"pac":p_nom,"ed":p_eda,"fy":p_fey,"dv":p_dvi,"dr":datos_extraidos['dr'],"si":p_siv,"ai":datos_extraidos['ai'],"fecha":p_fec}
+        archivo_word = generar_docx(texto_ia, dict_final, imgs)
+        st.download_button("📥 DESCARGAR INFORME EN WORD", archivo_word, f"Informe_{p_nom}.docx")
