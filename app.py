@@ -5,139 +5,143 @@ import fitz  # PyMuPDF
 import re
 import io
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Pt
+from datetime import datetime
 
-# 1. Configuración de Seguridad y Secrets
-def get_groq_client():
-    # Intenta obtener la clave desde secrets o desde el input del usuario
-    api_key = st.secrets.get("GROQ_API_KEY") or st.session_state.get("custom_api_key")
-    if not api_key:
-        return None
-    return Groq(api_key=api_key)
+# --- CONFIGURACIÓN SENIOR ---
+st.set_page_config(page_title="CardioReport Pro v6.0", layout="wide")
 
-# 2. Motor de Extracción con Normalización de Texto
-def extraer_datos_precisos(doc_pdf):
-    texto_completo = ""
-    for pagina in doc_pdf:
-        texto_completo += pagina.get_text()
-    
-    # Normalización: Convertimos todo a una sola línea limpia
-    # Eliminamos comillas, saltos de línea y símbolos que ensucian las tablas del SonoScape
-    t_limpio = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚ\s:]', ' ', texto_completo)
-    t_limpio = " ".join(t_limpio.split()) # Colapsar espacios
-    
-    datos = {"pac": "NO DETECTADO", "dv": "40", "si": "11", "fy": "67"} # Defaults basados en Alicia
-    
-    # Búsqueda de Paciente
-    m_pac = re.search(r"Paciente\s*:\s*([A-Z\s]+?)(?:\s*Fecha|$)", t_limpio, re.I)
-    if m_pac: datos["pac"] = m_pac.group(1).strip()
+def get_client():
+    key = st.secrets.get("GROQ_API_KEY") or st.session_state.get("api_key")
+    return Groq(api_key=key) if key else None
 
-    # Búsqueda de métricas usando proximidad (Lookahead positivo)
-    # Buscamos la sigla y el primer número que aparezca después
-    regex_map = {
-        "dv": r"DDVI\s+(\d+)",
-        "si": r"(?:DDSIV|SIV)\s+(\d+)",
-        "fy": r"(?:FE|eyección)\s+(?:del\s+VI\s+)?(\d+)"
+def extraer_todo_el_contexto(doc_pdf):
+    # Extraemos texto de las primeras 2 páginas para datos y conclusiones del médico
+    texto = ""
+    for i in range(min(2, len(doc_pdf))):
+        texto += doc_pdf[i].get_text()
+    
+    # Limpieza de caracteres de tabla (", \n, \r)
+    t_limpio = re.sub(r'[\"\'\r\t]', '', texto)
+    t_limpio = re.sub(r'\n+', ' ', t_limpio)
+    
+    datos = {
+        "paciente": "NO DETECTADO",
+        "fecha": datetime.now().strftime("%d/%m/%Y"),
+        "edad": "", "peso": "", "altura": "",
+        "ddvi": "", "siv": "", "fey": "", "ai": ""
+    }
+
+    # 1. Regex de alta precisión
+    m_pac = re.search(r"Paciente:\s*([A-Z\s]+?)(?:Fecha|Edad|$)", t_limpio, re.I)
+    if m_pac: datos["paciente"] = m_pac.group(1).strip()
+    
+    m_fec = re.search(r"Fecha(?:\s*de\s*estudio)?:\s*(\d{2}/\d{2}/\d{4})", t_limpio, re.I)
+    if m_fec: datos["fecha"] = m_fec.group(1)
+
+    # 2. Datos de tabla (Busca etiqueta y el número inmediato)
+    # Ejemplo: DDVI 40 mm -> Captura 40
+    metricas = {
+        "ddvi": r"DDVI\s*(\d+)",
+        "siv": r"(?:DDSIV|SIV)\s*(\d+)",
+        "ai": r"(?:DDAI|AI)\s*(\d+)",
+        "fey": r"eyección\s*del\s*VI\s*(\d+)" # Prioriza texto del Dr.
     }
     
-    for clave, patron in regex_map.items():
-        match = re.search(patron, t_limpio, re.I)
-        if match:
-            datos[clave] = match.group(1)
-            
+    for k, v in metricas.items():
+        res = re.search(v, t_limpio, re.I)
+        if res: datos[k] = res.group(1)
+    
+    # Si no encontró FEy en texto, busca FA en tabla y calcula
+    if not datos["fey"]:
+        m_fa = re.search(r"FA\s*(\d+)", t_limpio)
+        if m_fa: datos["fey"] = str(round(float(m_fa.group(1)) * 1.76))
+
     return datos
 
-# 3. Generador de Word con Grid de Imágenes 4x2
-def generar_word_pro(datos, informe_texto, doc_pdf):
+def generar_word_estilo_pastore(datos, informe_ia, doc_pdf):
     doc = Document()
-    doc.add_heading("INFORME ECOCARDIOGRÁFICO", 0)
-    doc.add_paragraph(f"PACIENTE: {datos['pac']}")
-    doc.add_paragraph("-" * 30)
-    doc.add_paragraph(informe_texto)
-    doc.add_paragraph("\nDr. Francisco A. Pastore")
+    # Encabezado Médico
+    h = doc.add_heading("INFORME ECOCARDIOGRÁFICO", 0)
     
-    # Anexo de imágenes
+    # Datos Generales
+    p = doc.add_paragraph()
+    p.add_run(f"PACIENTE: {datos['paciente']}\n").bold = True
+    p.add_run(f"FECHA: {datos['fecha']}\n")
+    if datos['edad']: p.add_run(f"EDAD: {datos['edad']} años  ")
+    if datos['peso']: p.add_run(f"PESO: {datos['peso']} kg  ")
+    if datos['altura']: p.add_run(f"ALTURA: {datos['altura']} cm")
+
+    doc.add_paragraph("-" * 50)
+    
+    # Cuerpo del Informe (Sin verso)
+    doc.add_paragraph(informe_ia)
+    
+    doc.add_paragraph("\n" + "_" * 30)
+    doc.add_paragraph("Dr. Francisco A. Pastore\nM.P. 12345") # Ajustar matricula
+
+    # ANEXO 4x2
     doc.add_page_break()
     doc.add_heading("ANEXO DE IMÁGENES", level=1)
-    
-    imagenes = []
+    imgs = []
     for i in range(len(doc_pdf)):
         for img in doc_pdf[i].get_images(full=True):
-            xref = img[0]
-            base_image = doc_pdf.extract_image(xref)
-            imagenes.append(base_image["image"])
-
-    if imagenes:
+            imgs.append(doc_pdf.extract_image(img[0])["image"])
+    
+    if imgs:
         table = doc.add_table(rows=4, cols=2)
-        for idx, img_data in enumerate(imagenes[:8]):
-            row, col = idx // 2, idx % 2
-            cell_para = table.rows[row].cells[col].paragraphs[0]
-            run = cell_para.add_run()
+        for idx, img_data in enumerate(imgs[:8]):
+            run = table.rows[idx//2].cells[idx%2].paragraphs[0].add_run()
             run.add_picture(io.BytesIO(img_data), width=Inches(2.8))
 
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
-# --- INTERFAZ DE USUARIO ---
-st.set_page_config(page_title="CardioReport Senior", layout="wide")
-st.title("🏥 CardioReport v5.0 - Sistema Senior")
+# --- INTERFAZ ---
+st.title("🏥 CardioReport Senior v6.0")
 
-# Sidebar para API Key si no está en Secrets
 with st.sidebar:
     if "GROQ_API_KEY" not in st.secrets:
-        st.info("API Key no detectada en Secrets.")
-        st.session_state.custom_api_key = st.text_input("Ingrese Groq API Key manualmente:", type="password")
-    else:
-        st.success("API Key cargada desde Secrets ✅")
-    
-    archivo = st.file_uploader("Subir PDF de Estudio", type=["pdf"])
-    if st.button("Resetear"):
-        st.session_state.clear()
-        st.rerun()
+        st.session_state.api_key = st.text_input("API Key", type="password")
+    archivo = st.file_uploader("Subir PDF", type=["pdf"])
 
-# Lógica Principal
 if archivo:
-    # 1. Procesar PDF
-    doc_original = fitz.open(stream=archivo.read(), filetype="pdf")
-    datos_auto = extraer_datos_precisos(doc_original)
+    doc_pdf = fitz.open(stream=archivo.read(), filetype="pdf")
+    d_auto = extraer_todo_el_contexto(doc_pdf)
 
-    # 2. Formulario de Validación ( UI Limpia )
-    with st.form("validador_senior"):
-        st.subheader("Confirmación de Datos")
-        c1, c2, c3, c4 = st.columns(4)
-        pac = c1.text_input("Paciente", datos_auto["pac"])
-        fey = c2.text_input("FEy %", datos_auto["fy"])
-        ddvi = c3.text_input("DDVI mm", datos_auto["dv"])
-        siv = c4.text_input("SIV mm", datos_auto["si"])
+    with st.form("validador"):
+        st.subheader("Datos Generales y Técnicos")
+        c1, c2, c3 = st.columns([2,1,1])
+        pac = c1.text_input("Paciente", d_auto["paciente"])
+        fec = c2.text_input("Fecha", d_auto["fecha"])
+        edad = c3.text_input("Edad", d_auto["edad"])
         
-        submit = st.form_submit_button("🚀 GENERAR INFORME PROFESIONAL")
-
-    # 3. Procesamiento y Salida
-    if submit:
-        client = get_groq_client()
-        if not client:
-            st.error("Error: No se encontró la API Key. Por favor verifique los Secrets o la Sidebar.")
-        else:
-            prompt = (f"Actúa como el Dr. Pastore. Redacta el informe técnico de ecocardiograma. "
-                      f"Paciente: {pac}. Datos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%. "
-                      f"Estilo: Directo, numérico, sin verso, sin recomendaciones.")
+        c4, c5, c6, c7 = st.columns(4)
+        fey = c4.text_input("FEy %", d_auto["fey"])
+        ddvi = c5.text_input("DDVI mm", d_auto["ddvi"])
+        siv = c6.text_input("SIV mm", d_auto["siv"])
+        ai = c7.text_input("AI mm", d_auto["ai"])
+        
+        if st.form_submit_button("GENERAR INFORME"):
+            client = get_client()
+            # Prompt Senior: Forzamos estructura Concreta + Conclusión
+            prompt = f"""Actúa como el Dr. Pastore. Genera un informe médico.
+            DATOS: Paciente {pac}, DDVI {ddvi}mm, SIV {siv}mm, AI {ai}mm, FEy {fey}%.
+            ESTILO: Técnico, médico, sin verso, sin recomendaciones.
+            ESTRUCTURA: 
+            1. Hallazgos (numéricos y de motilidad).
+            2. Conclusión (Diagnóstico clínico breve)."""
             
-            with st.spinner("Generando informe..."):
-                res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user', 'content':prompt}])
-                st.session_state.informe_ia = res.choices[0].message.content
-                st.session_state.word_file = generar_word_pro({"pac":pac, "fy":fey, "dv":ddvi, "si":siv}, st.session_state.informe_ia, doc_original)
-                st.session_state.ready = True
+            res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':prompt}])
+            st.session_state.txt = res.choices[0].message.content
+            st.session_state.word = generar_word_estilo_pastore(
+                {"paciente":pac, "fecha":fec, "edad":edad, "peso":"", "altura":"", "fey":fey}, 
+                st.session_state.txt, doc_pdf
+            )
+            st.session_state.ready = True
 
-    # 4. Zona de Descarga (FUERA DEL FORMULARIO)
     if st.session_state.get("ready"):
-        st.markdown("---")
-        st.subheader("Informe Resultante")
-        st.info(st.session_state.informe_ia)
-        st.download_button(
-            label="📄 Descargar Informe Word + Imágenes",
-            data=st.session_state.word_file,
-            file_name=f"Informe_{pac.replace(' ', '_')}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        st.info(st.session_state.txt)
+        st.download_button("📥 DESCARGAR INFORME WORD", st.session_state.word, f"Informe_{pac}.docx")
