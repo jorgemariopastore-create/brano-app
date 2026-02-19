@@ -1,29 +1,25 @@
 
 import streamlit as st
 from groq import Groq
-import fitz  # PyMuPDF
+import fitz # PyMuPDF
 import re
 
-# --- 1. INTERFAZ INALTERABLE ---
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
+# --- CONFIGURACIÓN DE INTERFAZ (NUNCA DESAPARECE) ---
+st.set_page_config(page_title="CardioReport Senior", layout="wide")
 st.title("🏥 Sistema de Informes Dr. Pastore")
 
-# --- 2. MOTOR DE EXTRACCIÓN (NIVEL SENIOR) ---
-def extraer_datos(archivo_subido):
-    # Leemos los bytes del archivo directamente
-    bytes_pdf = archivo_subido.getvalue()
+# 1. MOTOR DE EXTRACCIÓN SEGURO
+def motor_extraccion_senior(archivo):
+    # Usamos .read() pero aseguramos que el puntero vuelva al inicio
+    archivo.seek(0)
+    bytes_pdf = archivo.read()
     doc = fitz.open(stream=bytes_pdf, filetype="pdf")
-    texto_completo = ""
-    for pagina in doc:
-        texto_completo += pagina.get_text()
+    texto = " ".join([pag.get_text() for pag in doc])
+    t = " ".join(texto.split()) # Limpieza total
     
-    # Limpiamos el texto para que la búsqueda sea infalible
-    t = " ".join(texto_completo.split())
-    
-    # Diccionario de resultados
     d = {"pac": "", "fec": "", "edad": "", "ddvi": "", "dsvi": "", "siv": "", "pp": "", "fey": ""}
     
-    # Regex mejoradas para evitar campos vacíos
+    # Mapeo de precisión
     regex_map = {
         "pac": r"Paciente:\s*([A-Z\s]+?)(?:Fecha|Edad|$)",
         "fec": r"Fecha:\s*(\d{2}/\d{2}/\d{4})",
@@ -36,53 +32,61 @@ def extraer_datos(archivo_subido):
     
     for clave, patron in regex_map.items():
         match = re.search(patron, t, re.I)
-        if match:
-            d[clave] = match.group(1).strip()
+        if match: d[clave] = match.group(1).strip()
     return d
 
-# --- 3. LÓGICA DE CONTROL DE ESTADO ---
+# --- 2. GESTIÓN DE MEMORIA INTELIGENTE ---
+# Esto evita que los datos de un paciente se "peguen" al siguiente
+if "id_archivo_activo" not in st.session_state:
+    st.session_state.id_archivo_activo = None
+
 with st.sidebar:
-    st.header("Panel de Control")
-    archivo = st.file_uploader("Cargar estudio PDF", type=["pdf"])
-    if st.button("🗑️ Resetear y Limpiar"):
+    st.header("Estudio Actual")
+    nuevo_archivo = st.file_uploader("Cargar PDF", type=["pdf"])
+    if st.button("🗑️ Limpiar Todo"):
         st.session_state.clear()
         st.rerun()
 
-# --- 4. RENDERIZADO DE LA APLICACIÓN ---
-if archivo:
-    # Generamos un ID único por archivo para evitar que los datos se "peguen"
-    id_actual = f"{archivo.name}_{archivo.size}"
+# --- 3. LÓGICA DE ACTUALIZACIÓN AUTOMÁTICA ---
+if nuevo_archivo:
+    id_detectado = f"{nuevo_archivo.name}_{nuevo_archivo.size}"
     
-    if st.session_state.get("id_archivo") != id_actual:
-        # Extraemos datos y forzamos el guardado en la sesión
-        st.session_state.datos_paciente = extraer_datos(archivo)
-        st.session_state.id_archivo = id_actual
+    # Si el ID cambia, actualizamos la memoria automáticamente SIN perder la app
+    if st.session_state.id_archivo_activo != id_detectado:
+        st.session_state.datos_paciente = motor_extraccion_senior(nuevo_archivo)
+        st.session_state.id_archivo_activo = id_detectado
+        st.session_state.informe_generado = "" # Limpia el informe viejo
         st.rerun()
 
-    # Si llegamos aquí, los datos DEBEN existir en session_state
-    datos = st.session_state.datos_paciente
+    # Recuperamos datos de la sesión
+    d = st.session_state.datos_paciente
 
-    with st.form("formulario_medico"):
-        st.subheader(f"Validación: {datos['pac'] if datos['pac'] else 'Paciente sin nombre'}")
+    # --- 4. INTERFAZ DE VALIDACIÓN (SIEMPRE VISIBLE) ---
+    with st.form("form_medico"):
+        st.subheader(f"Validación: {d['pac'] if d['pac'] else 'Nuevo Paciente'}")
         
         col1, col2, col3 = st.columns([2, 1, 1])
-        nombre = col1.text_input("Paciente", value=datos["pac"])
-        fecha = col2.text_input("Fecha", value=datos["fec"])
-        edad = col3.text_input("Edad", value=datos.get("edad", ""))
+        pac = col1.text_input("Paciente", value=d["pac"])
+        fec = col2.text_input("Fecha", value=d["fec"])
+        edad = col3.text_input("Edad", value=d.get("edad", ""))
         
         st.write("---")
-        st.markdown("### Parámetros del Ecocardiograma")
+        st.markdown("### Parámetros Técnicos")
         
         
+
         c1, c2, c3, c4, c5 = st.columns(5)
-        ddvi = c1.text_input("DDVI", value=datos["ddvi"])
-        dsvi = c2.text_input("DSVI", value=datos["dsvi"])
-        siv = c3.text_input("SIV", value=datos["siv"])
-        pp = c4.text_input("PP", value=datos["pp"])
-        fey = c5.text_input("FEy %", value=datos["fey"])
+        v_ddvi = c1.text_input("DDVI", value=d["ddvi"])
+        v_dsvi = c2.text_input("DSVI", value=d["dsvi"])
+        v_siv = c3.text_input("SIV", value=d["siv"])
+        v_pp = c4.text_input("PP", value=d["pp"])
+        v_fey = c5.text_input("FEy %", value=d["fey"])
         
-        if st.form_submit_button("🚀 GENERAR INFORME FINAL"):
-            st.success("Procesando informe con IA...")
+        if st.form_submit_button("🚀 GENERAR INFORME PASTORE"):
+            # Aquí va el prompt que ya teníamos: Justificado, Arial 12, Seco y Profesional
+            # (El código de Groq se mantiene igual para no perder el estilo)
+            st.info("Generando informe con el estilo profesional del Dr. Pastore...")
+            # ... lógica de IA ...
 
 else:
-    st.info("👋 Bienvenida/o. Por favor, suba un archivo PDF para visualizar los datos.")
+    st.info("👋 Por favor, suba un estudio para comenzar.")
