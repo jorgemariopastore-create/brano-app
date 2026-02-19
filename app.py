@@ -146,3 +146,19 @@ if st.session_state.datos:
 
     if st.button("🚀 GENERAR INFORME"):
         cl = Groq(api_key=ak)
+        px = f"Redacta un informe médico técnico estilo Pastore. Estrictamente numérico, sin prosa. Secciones: I, II, III, IV. Datos: DDVI {d['dv']}mm, SIV {d['si']}mm, FEy {d['fy']}%."
+        res = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
+        st.session_state.t_ia = res.choices[0].message.content
+        
+        # Extraer imágenes para el Word
+        imgs = []
+        with fitz.open(stream=u2.getvalue(), filetype="pdf") as dp:
+            for p in dp:
+                for img in p.get_images():
+                    imgs.append(dp.extract_image(img[0])["image"])
+        
+        st.session_state.word = generar_word_pastore(st.session_state.t_ia, d, imgs)
+
+if st.session_state.t_ia:
+    st.info(st.session_state.t_ia)
+    st.download_button("📥 DESCARGAR WORD", st.session_state.word, f"Informe_{st.session_state.datos['pac']}.docx")
