@@ -1,164 +1,95 @@
 
 import streamlit as st
 from groq import Groq
-import fitz, io, re
-from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+import fitz  # PyMuPDF
+import re
 
-# --- 1. MOTOR DE EXTRACCIÓN HÍBRIDO ---
+# 1. Función de extracción robusta
+def extraer_dato(texto, clave):
+    # Soporta: "LVIDd: 50", "LVIDd=50", "LVIDd  50", "LVIDd : 50.5"
+    patron = rf"{clave}\s*[:=\s]\s*([\d.,]+)"
+    match = re.search(patron, texto, re.IGNORECASE)
+    if match:
+        return match.group(1).replace(',', '.') # Normaliza decimales
+    return ""
 
-def procesar_estudio_optimizado(txt_raw, pdf_bytes):
-    # Diccionario con valores por defecto
-    d = {
-        "pac": "PACIENTE", "ed": "--", "fecha": "--", 
-        "peso": "--", "alt": "--", "dv": "--", 
-        "si": "--", "fy": "60", "dr": "--", "ai": "--"
-    }
-    
-    # --- A. EXTRACCIÓN DEL PDF (Datos Personales y Físicos) ---
-    try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-            texto_pdf = doc[0].get_text()
-            
-            # Nombre: Buscamos después de "Paciente:" o "Nombre pac."
-            n_m = re.search(r"(?:Nombre pac\.|Paciente)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
-            if n_m: d["pac"] = n_m.group(1).strip().upper()
-            
-            # Fecha del Estudio (evitamos fecha de nacimiento buscando cerca de la cabecera)
-            f_m = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", texto_pdf)
-            if f_m: d["fecha"] = f_m.group(1)
-            
-            # Peso y Altura (El PDF suele tenerlos limpios)
-            p_m = re.search(r"Peso\s*\(?kg\)?\s*[:=-]?\s*([\d.]+)", texto_pdf, re.I)
-            if p_m: d["peso"] = p_m.group(1)
-            
-            a_m = re.search(r"Altura\s*\(?cm\)?\s*[:=-]?\s*([\d.]+)", texto_pdf, re.I)
-            if a_m: d["alt"] = a_m.group(1)
-    except: pass
+st.set_page_config(page_title="CardioReport", layout="wide")
+st.title("🏥 Asistente de Ecocardiogramas")
 
-    # --- B. EXTRACCIÓN DEL TXT (Medidas Técnicas) ---
-    if txt_raw:
-        # Edad (del TXT es confiable)
-        e_m = re.search(r"Age\s*=\s*(\d+)", txt_raw, re.I)
-        if e_m: d["ed"] = e_m.group(1)
-
-        # Medidas del bloque [MEASUREMENT]
-        def get_val(codigo):
-            m = re.search(rf"{codigo}.*?value\s*=\s*([\d.]+)", txt_raw, re.DOTALL | re.IGNORECASE)
-            return str(int(float(m.group(1)))) if m else "--"
-
-        d["dv"] = get_val("LVIDd")      # DDVI
-        d["si"] = get_val("IVSd")      # Septum
-        d["dr"] = get_val("AORootDiam") # Raíz Aórtica
-        d["ai"] = get_val("LADiam")     # Aurícula Izq.
-        d["fy"] = get_val("EF")         # FEy
-        if d["fy"] == "--": d["fy"] = "60"
-
-    return d
-
-# --- 2. GENERACIÓN DEL WORD (Estilo Pastore + Anexo 2 col) ---
-
-def generar_word_pastore(rep, dt, ims):
-    doc = Document()
-    doc.styles['Normal'].font.name, doc.styles['Normal'].font.size = 'Arial', Pt(10)
-    
-    # Encabezado
-    h = doc.add_paragraph()
-    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    h.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
-    
-    # Tabla Datos
-    t1 = doc.add_table(rows=2, cols=3); t1.style = 'Table Grid'
-    l1 = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", f"FECHA: {dt['fecha']}", 
-          f"PESO: {dt['peso']} kg", f"ALTURA: {dt['alt']} cm", "BSA: --"]
-    for i, x in enumerate(l1): t1.cell(i//3, i%3).text = x
-    
-    doc.add_paragraph("\n")
-    # Tabla Medidas
-    t2 = doc.add_table(rows=5, cols=2); t2.style = 'Table Grid'
-    ms = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), 
-          ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
-    for i, (n, v) in enumerate(ms):
-        t2.cell(i,0).text, t2.cell(i,1).text = n, v
-    
-    # Informe IA
-    doc.add_paragraph("\n")
-    for linea in rep.split('\n'):
-        linea = linea.strip().replace('*', '')
-        if not linea: continue
-        p = doc.add_paragraph()
-        if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]):
-            p.add_run(linea).bold = True
-        else: p.add_run(linea)
-            
-    # Firma
-    f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("\n\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
-    
-    # Anexo Imágenes (Filas de 2)
-    if ims:
-        doc.add_page_break()
-        p_anexo = doc.add_paragraph()
-        p_anexo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p_anexo.add_run("ANEXO DE IMÁGENES").bold = True
-        
-        ti = doc.add_table(rows=(len(ims)+1)//2, cols=2)
-        for i, m in enumerate(ims):
-            c = ti.cell(i//2, i%2).paragraphs[0]
-            c.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            c.add_run().add_picture(io.BytesIO(m), width=Inches(2.8))
-            
-    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
-
-# --- 3. INTERFAZ STREAMLIT CON SESSION STATE ---
-
-st.set_page_config(page_title="CardioPro 48.0", layout="wide")
-
-if 'datos' not in st.session_state:
+# Inicializar session_state para que los datos no se borren
+if "datos" not in st.session_state:
     st.session_state.datos = None
-if 't_ia' not in st.session_state:
-    st.session_state.t_ia = None
-
-st.title("🏥 CardioReport Pro v48.0")
 
 with st.sidebar:
-    u1 = st.file_uploader("1. Archivo TXT", type=["txt"])
-    u2 = st.file_uploader("2. Archivo PDF", type=["pdf"])
-    ak = st.secrets.get("GROQ_API_KEY")
+    st.header("1. Carga de Archivos")
+    arc_txt = st.file_uploader("Archivo TXT del Equipo", type=["txt"])
+    arc_pdf = st.file_uploader("Archivo PDF (Imágenes/Nombre)", type=["pdf"])
+    api_key = st.text_input("Groq API Key", type="password")
     
-    if st.button("🔄 EXTRAER DATOS") and u1 and u2:
-        t_raw = u1.read().decode("latin-1", errors="ignore")
-        st.session_state.datos = procesar_estudio_optimizado(t_raw, u2.getvalue())
+    if st.button("Limpiar Sesión / Nuevo Paciente"):
+        st.session_state.datos = None
+        st.rerun()
 
-if st.session_state.datos:
-    d = st.session_state.datos
-    st.subheader("🔍 VALIDACIÓN DE DATOS")
-    c1, c2, c3 = st.columns(3)
-    d["pac"] = c1.text_input("Paciente", d["pac"])
-    d["fy"] = c1.text_input("FEy (%)", d["fy"])
-    d["ed"] = c2.text_input("Edad", d["ed"])
-    d["dv"] = c2.text_input("DDVI (mm)", d["dv"])
-    d["fecha"] = c3.text_input("Fecha", d["fecha"])
-    d["si"] = c3.text_input("SIV (mm)", d["si"])
-    d["peso"] = c1.text_input("Peso (kg)", d["peso"])
-    d["alt"] = c2.text_input("Altura (cm)", d["alt"])
+# 2. Lógica de Procesamiento (Solo ocurre una vez al cargar archivos)
+if arc_txt and arc_pdf and api_key:
+    if st.session_state.datos is None:
+        with st.spinner("Extrayendo datos..."):
+            t_raw = arc_txt.read().decode("latin-1", errors="ignore")
+            p_bytes = arc_pdf.read()
+            
+            # Valores por defecto
+            d = {"pac": "DESCONOCIDO", "fy": "", "dv": "", "si": ""}
+            
+            # Extraer Nombre del PDF
+            try:
+                with fitz.open(stream=p_bytes, filetype="pdf") as doc:
+                    texto_pdf = "".join([pag.get_text() for pag in doc])
+                    n_m = re.search(r"(?:Nombre|Paciente)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
+                    if n_m: d["pac"] = n_m.group(1).strip().upper()
+            except Exception as e:
+                st.error(f"Error en PDF: {e}")
 
-    if st.button("🚀 GENERAR INFORME"):
-        cl = Groq(api_key=ak)
-        px = f"Redacta un informe médico técnico estilo Pastore. Estrictamente numérico, sin prosa. Secciones: I, II, III, IV. Datos: DDVI {d['dv']}mm, SIV {d['si']}mm, FEy {d['fy']}%."
-        res = cl.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
-        st.session_state.t_ia = res.choices[0].message.content
-        
-        # Extraer imágenes para el Word
-        imgs = []
-        with fitz.open(stream=u2.getvalue(), filetype="pdf") as dp:
-            for p in dp:
-                for img in p.get_images():
-                    imgs.append(dp.extract_image(img[0])["image"])
-        
-        st.session_state.word = generar_word_pastore(st.session_state.t_ia, d, imgs)
+            # Extraer valores numéricos del TXT
+            d["dv"] = extraer_dato(t_raw, "LVIDd")
+            d["si"] = extraer_dato(t_raw, "IVSd")
+            d["fy"] = extraer_dato(t_raw, "EF")
+            
+            st.session_state.datos = d
 
-if st.session_state.t_ia:
-    st.info(st.session_state.t_ia)
-    st.download_button("📥 DESCARGAR WORD", st.session_state.word, f"Informe_{st.session_state.datos['pac']}.docx")
+    # 3. Formulario de Edición (Usa los datos de session_state)
+    if st.session_state.datos:
+        with st.form("editor_medico"):
+            st.subheader("🔍 Validar y Editar Datos")
+            col1, col2 = st.columns(2)
+            
+            # Los inputs cargan el valor inicial del session_state
+            paciente = col1.text_input("Nombre del Paciente", st.session_state.datos["pac"])
+            fey = col1.text_input("FEy % (Función Sistólica)", st.session_state.datos["fy"])
+            ddvi = col2.text_input("DDVI mm (Diámetro)", st.session_state.datos["dv"])
+            siv = col2.text_input("SIV mm (Septum)", st.session_state.datos["si"])
+            
+            btn_confirmar = st.form_submit_button("🚀 GENERAR INFORME IA")
+
+        if btn_confirmar:
+            # Actualizamos el estado con lo que el usuario editó
+            st.session_state.datos.update({"pac": paciente, "fy": fey, "dv": ddvi, "si": siv})
+            
+            try:
+                client = Groq(api_key=api_key)
+                prompt = (f"Actúa como cardiólogo. Redacta un informe profesional basado en: "
+                         f"Paciente {paciente}. DDVI: {ddvi}mm, SIV: {siv}mm, FEy: {fey}%. "
+                         f"Indica si los valores son normales o hay alteraciones.")
+                
+                with st.spinner("La IA está redactando..."):
+                    res = client.chat.completions.create(
+                        model='llama-3.3-70b-versatile', 
+                        messages=[{'role':'user','content':prompt}]
+                    )
+                
+                st.success("✅ Informe Generado")
+                st.markdown("---")
+                st.write(res.choices[0].message.content)
+            except Exception as e:
+                st.error(f"Error con Groq: {e}")
+else:
+    st.info("👋 Por favor, carga ambos archivos y la API Key en la barra lateral para comenzar.")
