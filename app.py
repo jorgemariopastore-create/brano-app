@@ -7,127 +7,175 @@ import io
 from docx import Document
 from docx.shared import Inches
 
-# Configuración de la API
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="CardioReport Pro - Dr. Pastore", layout="wide")
+
+# Intentar cargar la API Key de secrets
 try:
     GROQ_KEY = st.secrets["GROQ_API_KEY"]
 except:
     GROQ_KEY = None
 
+# --- FUNCIONES DE EXTRACCIÓN Y PROCESAMIENTO ---
+
 def extraer_datos_pdf(doc_pdf):
-    # Extraemos y limpiamos el texto de todas las páginas
-    texto_sucio = ""
+    """Extrae texto y busca patrones de datos del SonoScape."""
+    texto_total = ""
     for pagina in doc_pdf:
-        texto_sucio += pagina.get_text()
+        texto_total += pagina.get_text()
     
-    # Limpieza total para que las tablas no rompan la búsqueda
-    t = texto_sucio.replace('"', '').replace('\n', ' ').replace('\r', ' ').replace('  ', ' ')
+    # Limpieza para que las tablas no interfieran
+    t = texto_total.replace('"', '').replace('\n', ' ').replace('\r', ' ')
     
     datos = {"pac": "NO DETECTADO", "dv": "", "si": "", "fy": ""}
     
-    # 1. Nombre del Paciente
-    m_pac = re.search(r"Paciente:\s*([A-Z\s]+?)(?:\s*Fecha|$)", t, re.I)
-    if m_pac: datos["pac"] = m_pac.group(1).strip()
-
-    # 2. Datos de la Tabla (DDVI y SIV)
-    m_dv = re.search(r"DDVI\s*(\d+)", t)
-    m_si = re.search(r"DDSIV\s*(\d+)", t)
+    # 1. Nombre del Paciente (Busca patrón 'Paciente: NOMBRE')
+    m_pac = re.search(r"Paciente:\s*([A-Z\s]+?)(?:\s*Fecha|\s*Estudio|$)", t, re.I)
+    if m_pac:
+        datos["pac"] = m_pac.group(1).strip()
     
+    # 2. DDVI (Busca DDVI seguido de número)
+    m_dv = re.search(r"DDVI\s*(\d+)", t)
     if m_dv: datos["dv"] = m_dv.group(1)
+    
+    # 3. SIV / DDSIV
+    m_si = re.search(r"(?:DDSIV|SIV)\s*(\d+)", t)
     if m_si: datos["si"] = m_si.group(1)
     
-    # 3. Fracción de Eyección (Prioriza el texto del Dr. Pastore)
+    # 4. FEy (Prioriza el texto del informe: 'eyección del VI X%')
     m_fe = re.search(r"eyección del VI\s*(\d+)", t)
-    if m_fe: 
+    if m_fe:
         datos["fy"] = m_fe.group(1)
     else:
-        # Si no está la FE, busca la FA (Fracción de Acortamiento)
+        # Respaldo: busca FA (Fracción de acortamiento)
         m_fa = re.search(r"FA\s*(\d+)", t)
         if m_fa: datos["fy"] = str(round(float(m_fa.group(1)) * 1.76))
-
+        
     return datos
 
-def crear_word(datos, informe_ia, doc_pdf):
+def crear_docx_pastore(datos, texto_informe, doc_pdf):
+    """Genera el Word con el informe y el anexo de imágenes 4x2."""
     doc = Document()
-    doc.add_heading(f"INFORME ECOCARDIOGRÁFICO", 0)
+    doc.add_heading("INFORME ECOCARDIOGRÁFICO", 0)
+    
     doc.add_paragraph(f"PACIENTE: {datos['pac']}")
-    doc.add_paragraph("-" * 30)
+    doc.add_paragraph("-" * 40)
     
-    # Cuerpo del informe
-    doc.add_paragraph(informe_ia)
-    doc.add_paragraph("\nDr. Francisco A. Pastore")
+    # Informe de la IA
+    doc.add_paragraph(texto_informe)
     
-    # ANEXO DE IMÁGENES (4 filas x 2 columnas)
+    doc.add_paragraph("\n" + "-" * 20)
+    doc.add_paragraph("Dr. Francisco A. Pastore")
+
+    # ANEXO DE IMÁGENES
     doc.add_page_break()
     doc.add_heading("ANEXO DE IMÁGENES", level=1)
     
-    # Extraer imágenes del PDF (de las páginas 3 en adelante)
-    imgs_bytes = []
-    for i in range(2, len(doc_pdf)): # Páginas 3, 4, 5...
-        for img in doc_pdf[i].get_images(full=True):
+    # Recolectar imágenes del PDF (Suelen estar al final)
+    imagenes = []
+    for i in range(len(doc_pdf)):
+        page = doc_pdf[i]
+        for img in page.get_images(full=True):
             xref = img[0]
             base_image = doc_pdf.extract_image(xref)
-            imgs_bytes.append(base_image["image"])
+            imagenes.append(base_image["image"])
 
-    if imgs_bytes:
+    if imagenes:
+        # Crear tabla de 4 filas x 2 columnas
         tabla = doc.add_table(rows=4, cols=2)
-        for idx, img_data in enumerate(imgs_bytes[:8]): # Máximo 8 imágenes
+        for idx, img_data in enumerate(imagenes[:8]): # Máximo 8 fotos
             fila = idx // 2
             col = idx % 2
-            parrafo = tabla.rows[fila].cells[col].paragraphs[0]
+            celda = tabla.rows[fila].cells[col]
+            parrafo = celda.paragraphs[0]
             run = parrafo.add_run()
+            # Ajustamos el ancho a 3 pulgadas para que quepan 2 por fila
             run.add_picture(io.BytesIO(img_data), width=Inches(3.0))
-            
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf
+
+    target = io.BytesIO()
+    doc.save(target)
+    target.seek(0)
+    return target
 
 # --- INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="CardioReport Dr. Pastore", layout="wide")
-st.title("🏥 Sistema de Informes (Solo PDF)")
+
+st.title("🏥 Asistente Cardio v3.5 (Solo PDF)")
+
+# Inicializar estados
+if "datos_validados" not in st.session_state:
+    st.session_state.datos_validados = None
+    st.session_state.informe_ia = ""
+    st.session_state.word_ready = None
 
 with st.sidebar:
     st.header("Carga de Estudio")
-    archivo = st.file_uploader("Subir PDF", type=["pdf"])
+    archivo_pdf = st.file_uploader("Subir PDF del paciente", type=["pdf"])
     if st.button("🔄 Reiniciar"):
         st.session_state.clear()
         st.rerun()
 
-if archivo and GROQ_KEY:
-    if "finalizado" not in st.session_state:
-        pdf = fitz.open(stream=archivo.read(), filetype="pdf")
-        st.session_state.pdf_obj = pdf
-        st.session_state.datos = extraer_datos_pdf(pdf)
-        st.session_state.finalizado = True
+if archivo_pdf and GROQ_KEY:
+    # Procesar PDF solo una vez
+    if st.session_state.datos_validados is None:
+        doc = fitz.open(stream=archivo_pdf.read(), filetype="pdf")
+        st.session_state.doc_original = doc
+        st.session_state.datos_validados = extraer_datos_pdf(doc)
 
-    # FORMULARIO DE VALIDACIÓN
-    with st.form("confirmar"):
-        st.subheader("🔍 Confirmación de Datos")
+    # 1. Formulario de Validación
+    with st.form("editor_datos"):
+        st.subheader("🔍 Validar Datos Extraídos")
+        d = st.session_state.datos_validados
         c1, c2, c3, c4 = st.columns(4)
-        pac = c1.text_input("Paciente", st.session_state.datos["pac"])
-        fey = c2.text_input("FEy %", st.session_state.datos["fy"])
-        ddvi = c3.text_input("DDVI mm", st.session_state.datos["dv"])
-        siv = c4.text_input("SIV mm", st.session_state.datos["si"])
         
-        if st.form_submit_button("🚀 GENERAR INFORME Y WORD"):
-            client = Groq(api_key=GROQ_KEY)
-            # Prompt para estilo directo Dr. Pastore
-            prompt = (f"Genera un informe médico ecocardiográfico para el Dr. Pastore. "
-                     f"Paciente: {pac}. Hallazgos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%. "
-                     f"Estilo: Muy concreto, puramente numérico y clínico, sin introducciones, "
-                     f"sin recomendaciones preventivas y sin 'verso'.")
-            
+        pac_edit = c1.text_input("Paciente", d["pac"])
+        fey_edit = c2.text_input("FEy %", d["fy"])
+        ddvi_edit = c3.text_input("DDVI mm", d["dv"])
+        siv_edit = c4.text_input("SIV mm", d["si"])
+        
+        submit = st.form_submit_button("🚀 GENERAR INFORME")
+
+    # 2. Lógica al presionar Generar
+    if submit:
+        # Actualizar sesión con ediciones del médico
+        st.session_state.datos_validados.update({
+            "pac": pac_edit, "fy": fey_edit, "dv": ddvi_edit, "si": siv_edit
+        })
+        
+        client = Groq(api_key=GROQ_KEY)
+        
+        # PROMPT "ANTI-VERSO" ESTILO PASTORE
+        prompt = (f"Actúa como el Dr. Pastore. Redacta las conclusiones del ecocardiograma. "
+                  f"Paciente: {pac_edit}. Hallazgos: DDVI {ddvi_edit}mm, SIV {siv_edit}mm, FEy {fey_edit}%. "
+                  f"Instrucciones: Estilo seco, clínico y puramente numérico. "
+                  f"No incluyas introducciones, ni saludos, ni recomendaciones al paciente. "
+                  f"Escribe solo los hallazgos técnicos.")
+        
+        with st.spinner("IA redactando informe técnico..."):
             res = client.chat.completions.create(model='llama-3.3-70b-versatile', 
-                                               messages=[{'role':'user','content':prompt}])
-            texto_informe = res.choices[0].message.content
+                                               messages=[{'role':'user', 'content':prompt}])
+            st.session_state.informe_ia = res.choices[0].message.content
             
-            st.markdown("---")
-            st.subheader("Informe Sugerido")
-            st.write(texto_informe)
-            
-            # Botón de Descarga
-            word_data = crear_word(st.session_state.datos, texto_informe, st.session_state.pdf_obj)
-            st.download_button(label="📥 DESCARGAR INFORME (WORD + IMÁGENES)",
-                             data=word_data,
-                             file_name=f"Informe_{pac}.docx",
-                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            # Crear el archivo Word
+            st.session_state.word_ready = crear_docx_pastore(
+                st.session_state.datos_validados, 
+                st.session_state.informe_ia, 
+                st.session_state.doc_original
+            )
+
+    # 3. Mostrar resultado y descarga (FUERA DEL FORMULARIO)
+    if st.session_state.informe_ia:
+        st.markdown("---")
+        st.subheader("Informe Sugerido")
+        st.info(st.session_state.informe_ia)
+        
+        st.download_button(
+            label="📥 DESCARGAR INFORME EN WORD (CON IMÁGENES)",
+            data=st.session_state.word_ready,
+            file_name=f"Informe_{pac_edit.replace(' ', '_')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+elif not GROQ_KEY:
+    st.error("Falta la API Key de Groq en los Secrets de Streamlit.")
+else:
+    st.info("Por favor, sube el PDF del estudio para comenzar.")
