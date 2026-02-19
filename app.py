@@ -4,95 +4,109 @@ from groq import Groq
 import fitz  # PyMuPDF
 import re
 
-# 1. Configuración de Secrets
-# Asegúrate de tener en tu archivo .streamlit/secrets.toml:
-# GROQ_API_KEY = "tu_clave_aqui"
+# Intentar cargar la API KEY desde Secrets
 try:
     GROQ_KEY = st.secrets["GROQ_API_KEY"]
 except Exception:
     GROQ_KEY = None
-    st.error("⚠️ No se encontró 'GROQ_API_KEY' en los Secrets de Streamlit.")
 
-def extraer_dato(texto, clave):
-    # Soporta: "LVIDd: 50", "LVIDd=50", "LVIDd  50"
-    patron = rf"{clave}\s*[:=\s]\s*([\d.,]+)"
-    match = re.search(patron, texto, re.IGNORECASE)
-    if match:
-        return match.group(1).replace(',', '.')
+def extraer_dato_robusto(texto, claves_posibles):
+    """Busca entre varias etiquetas posibles para un mismo dato médico."""
+    for clave in claves_posibles:
+        # Busca la clave seguida de espacios/signos y captura el número (soporta 40, 40.5, 40,5)
+        patron = rf"{clave}\s*[:=\s]*\s*([\d.,]+)"
+        match = re.search(patron, texto, re.IGNORECASE)
+        if match:
+            return match.group(1).replace(',', '.')
     return ""
 
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("🏥 Asistente de Ecocardiogramas")
+st.set_page_config(page_title="CardioReport Elite", layout="wide")
 
-# Inicializar sesión
+# --- LÓGICA DE ESTILO MÉDICO ---
+ESTILO_MEDICO = """
+Actúa como un cardiólogo experto. Usa un tono formal, conciso y técnico. 
+Sigue este estilo de redacción:
+1. Diámetros y función sistólica (mencionar si está conservada).
+2. Motilidad y Fracción de Eyección (FEy).
+3. Descripción de aurículas y ventrículo derecho.
+4. Hallazgos de Doppler (patrón de llenado, relación E/A).
+"""
+
 if "datos" not in st.session_state:
     st.session_state.datos = None
 
 with st.sidebar:
-    st.header("1. Carga de Archivos")
-    arc_txt = st.file_uploader("Archivo TXT del Equipo", type=["txt"])
-    arc_pdf = st.file_uploader("Archivo PDF (Nombre/Imágenes)", type=["pdf"])
-    
-    if st.button("🔄 Nuevo Paciente / Limpiar"):
+    st.header("📂 Carga de Estudios")
+    arc_pdf = st.file_uploader("Subir informe PDF (Alicia Albornoz)", type=["pdf"])
+    if st.button("🔄 Limpiar y Nuevo Paciente"):
         st.session_state.datos = None
         st.rerun()
-    
-    st.divider()
-    st.caption("Configuración: API Key cargada desde Secrets ✅" if GROQ_KEY else "❌ API Key no configurada")
 
-# 2. Procesamiento de archivos
-if arc_txt and arc_pdf and GROQ_KEY:
+if arc_pdf and GROQ_KEY:
     if st.session_state.datos is None:
-        with st.spinner("Procesando archivos..."):
-            t_raw = arc_txt.read().decode("latin-1", errors="ignore")
+        with st.spinner("Analizando documento médico..."):
             p_bytes = arc_pdf.read()
-            
-            d = {"pac": "DESCONOCIDO", "fy": "", "dv": "", "si": ""}
+            d = {"pac": "NO ENCONTRADO", "fy": "", "dv": "", "si": ""}
             
             try:
                 with fitz.open(stream=p_bytes, filetype="pdf") as doc:
-                    texto_pdf = "".join([pag.get_text() for pag in doc])
-                    n_m = re.search(r"(?:Nombre|Paciente)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
-                    if n_m: d["pac"] = n_m.group(1).strip().upper()
-            except: pass
+                    texto_completo = "".join([pag.get_text() for pag in doc])
+                
+                # 1. Extraer Paciente
+                n_m = re.search(r"(?:Paciente|Nombre pac\.)\s*[:=-]?\s*([^<\r\n]*)", texto_completo, re.I)
+                if n_m: d["pac"] = n_m.group(1).strip().upper()
 
-            d["dv"] = extraer_dato(t_raw, "LVIDd")
-            d["si"] = extraer_dato(t_raw, "IVSd")
-            d["fy"] = extraer_dato(t_raw, "EF")
-            
-            st.session_state.datos = d
+                # 2. Extraer DDVI (Diámetro Diastólico VI)
+                d["dv"] = extraer_dato_robusto(texto_completo, ["DDVI", "Diám. Diastólico"])
+                
+                # 3. Extraer SIV (Septum Interventricular)
+                d["si"] = extraer_dato_robusto(texto_completo, ["DDSIV", "SIV", "Septum"])
+                
+                # 4. Extraer FEy (Fracción de Eyección)
+                # En tu PDF aparece como "FE(A4C)" o "Fracción de eyección del VI"
+                d["fy"] = extraer_dato_robusto(texto_completo, ["Fracción de eyección del VI", "EF\(A4C\)", "FEVI", "FA"])
+                
+                st.session_state.datos = d
+            except Exception as e:
+                st.error(f"Error al leer el PDF: {e}")
 
-    # 3. Formulario persistente
+    # --- INTERFAZ DE EDICIÓN ---
     if st.session_state.datos:
-        with st.form("editor_medico"):
-            st.subheader("🔍 Revisión de Datos Extraídos")
-            c1, c2 = st.columns(2)
+        st.subheader(f"👤 Paciente: {st.session_state.datos['pac']}")
+        
+        with st.form("editor"):
+            c1, c2, c3 = st.columns(3)
+            paciente = c1.text_input("Nombre", st.session_state.datos["pac"])
+            fey = c1.text_input("FEy (%)", st.session_state.datos["fy"])
+            ddvi = c2.text_input("DDVI (mm)", st.session_state.datos["dv"])
+            siv = c3.text_input("SIV (mm)", st.session_state.datos["si"])
             
-            paciente = c1.text_input("Nombre completo", st.session_state.datos["pac"])
-            fey = c1.text_input("FEy %", st.session_state.datos["fy"])
-            ddvi = c2.text_input("DDVI mm", st.session_state.datos["dv"])
-            siv = c2.text_input("SIV mm", st.session_state.datos["si"])
-            
-            submit = st.form_submit_button("🚀 GENERAR INFORME PROFESIONAL")
+            enviar = st.form_submit_button("📝 GENERAR INFORME CON ESTILO MÉDICO")
 
-        if submit:
-            # Actualizar estado antes de llamar a la IA
-            st.session_state.datos.update({"pac": paciente, "fy": fey, "dv": ddvi, "si": siv})
-            
+        if enviar:
             client = Groq(api_key=GROQ_KEY)
-            prompt = (f"Genera un informe médico de ecocardiograma para {paciente}. "
-                      f"Datos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%. "
-                      f"Usa lenguaje técnico y formal.")
+            # Prompt optimizado con el estilo del Dr. Pastore
+            prompt = f"""
+            {ESTILO_MEDICO}
+            Genera un informe para el paciente {paciente} con estos datos:
+            - DDVI: {ddvi} mm
+            - SIV: {siv} mm
+            - FEy: {fey} %
             
-            with st.spinner("Redactando informe..."):
+            Si el DDVI es ~40mm y SIV ~11mm, menciona 'remodelado concéntrico'. 
+            Si la FEy es >55%, menciona 'función sistólica conservada'.
+            """
+            
+            with st.spinner("Redactando..."):
                 res = client.chat.completions.create(
-                    model='llama-3.3-70b-versatile', 
-                    messages=[{'role':'user','content':prompt}]
+                    model='llama-3.3-70b-versatile',
+                    messages=[{'role':'user', 'content': prompt}]
                 )
-                st.markdown("### 📄 Informe Sugerido")
-                st.info(res.choices[0].message.content)
+                st.markdown("---")
+                st.markdown("### 📄 Borrador del Informe Médico")
+                st.write(res.choices[0].message.content)
 
 elif not GROQ_KEY:
-    st.warning("Falta la configuración de la API Key en los Secrets del servidor.")
+    st.error("🔑 Error: No se encontró la GROQ_API_KEY en los Secrets.")
 else:
-    st.info("Cargue los archivos TXT y PDF para comenzar el análisis.")
+    st.info("A la espera de un archivo PDF para procesar.")
