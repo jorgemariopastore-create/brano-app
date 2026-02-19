@@ -1,102 +1,79 @@
 
 import streamlit as st
 from groq import Groq
-import fitz
+import fitz  # PyMuPDF
 import re
 
-# 1. API Key
 try:
     GROQ_KEY = st.secrets["GROQ_API_KEY"]
 except:
     GROQ_KEY = None
 
-def extraccion_quirurgica(texto_sucio):
-    """
-    Limpia el texto de comillas, saltos de línea y basura de tablas.
-    Luego extrae los datos basándose en el formato del SonoScape E3.
-    """
-    # Limpieza total: convertimos todo a una tira separada por comas
-    t = texto_sucio.replace('"', '').replace('\n', ',').replace('\r', ',').replace(' ', '')
+def limpiar_y_extraer_todo(texto_combinado):
+    # Paso 1: Limpieza agresiva para eliminar ruido de tablas y saltos
+    t = texto_combinado.replace('"', '').replace('\n', ' ').replace('\r', ' ').replace('  ', ' ')
     
     datos = {"pac": "NO DETECTADO", "dv": "", "si": "", "fy": ""}
     
-    # 1. Extraer Paciente (Busca después de PatientName o Paciente)
-    m_pac = re.search(r"(?:PatientName|Paciente|Nombre),?([^,]+)", t, re.I)
+    # Paso 2: Extraer Paciente (Busca en ambos formatos)
+    m_pac = re.search(r"(?:Paciente|Nombre pac\.|PatientName)\s*[:\-,]?\s*([^,]+)", t, re.I)
     if m_pac:
         datos["pac"] = m_pac.group(1).replace('^', ' ').strip().upper()
 
-    # 2. Extraer Valores por Etiquetas (Formato PDF/CSV)
-    # Buscamos DDVI, luego una coma, y luego el número
-    m_dv = re.search(r"DDVI,?([\d.]+)", t, re.I)
-    m_si = re.search(r"(?:DDSIV|SIV),?([\d.]+)", t, re.I)
-    m_fa = re.search(r"(?:FA|FE|EF),?([\d.]+)", t, re.I)
+    # Paso 3: Búsqueda por etiquetas específicas (prioridad PDF/TXT limpio)
+    # Buscamos DDVI y el primer número que lo siga
+    m_dv = re.search(r"DDVI\s*(\d+)", t, re.I)
+    # Buscamos DDSIV o SIV
+    m_si = re.search(r"(?:DDSIV|SIV)\s*(\d+)", t, re.I)
+    # Buscamos FEy (en el PDF de Alicia está como 'Fracción de eyección del VI 67%')
+    m_fe = re.search(r"(?:FE|EF|Fracción\s*de\s*eyección)\s*(?:del\s*VI)?\s*(\d+)", t, re.I)
+    # Si no hay FE, buscamos FA (Fracción de acortamiento)
+    m_fa = re.search(r"FA\s*(\d+)", t, re.I)
 
     if m_dv: datos["dv"] = m_dv.group(1)
     if m_si: datos["si"] = m_si.group(1)
     
-    # Lógica de FEy: Si es FA (como el 38 de Alicia), calculamos FEy (~67)
-    if m_fa:
-        val_fa = float(m_fa.group(1))
-        datos["fy"] = str(round(val_fa * 1.76)) if val_fa < 50 else str(val_fa)
-
-    # 3. Respaldo Estructural (Si lo anterior falló, buscamos por rangos médicos)
-    if not datos["dv"] or not datos["si"]:
-        numeros = re.findall(r"([\d.]+)", t)
-        for n in numeros:
-            val = float(n)
-            # Si el valor está en cm (ej 4.0), lo pasamos a mm (40.0)
-            if 3.5 <= val <= 7.5: # Rango DDVI en cm
-                datos["dv"] = str(val * 10)
-            elif 0.6 <= val <= 1.6: # Rango SIV en cm
-                datos["si"] = str(val * 10)
-            elif 35 <= val <= 75: # Rango DDVI en mm
-                datos["dv"] = str(val)
-            elif 7 <= val <= 16: # Rango SIV en mm
-                datos["si"] = str(val)
+    if m_fe:
+        datos["fy"] = m_fe.group(1)
+    elif m_fa:
+        # Si solo tenemos FA (ej. 38), calculamos la FE aproximada (~67)
+        datos["fy"] = str(round(float(m_fa.group(1)) * 1.76))
 
     return datos
 
-st.set_page_config(page_title="CardioReport SonoScape", layout="wide")
-st.title("🏥 Asistente Cardio SonoScape E3")
+st.set_page_config(page_title="SonoScape Elite Hybrid", layout="wide")
+st.title("🏥 Asistente Cardio: Extracción TXT + PDF")
 
-if "datos" not in st.session_state:
-    st.session_state.datos = None
+# Widget para subir MULTIPLES archivos
+archivos = st.sidebar.file_uploader("Subir archivos (TXT y PDF de Alicia)", type=["txt", "pdf"], accept_multiple_files=True)
 
-with st.sidebar:
-    st.header("Carga de Estudios")
-    arc_txt = st.file_uploader("Subir TXT", type=["txt"])
-    arc_pdf = st.file_uploader("Subir PDF", type=["pdf"])
-    if st.button("🔄 Limpiar Todo"):
-        st.session_state.datos = None
-        st.rerun()
+if st.sidebar.button("🗑️ Resetear Sistema"):
+    st.session_state.datos_hibridos = None
+    st.rerun()
 
-# Procesamiento
-if (arc_txt or arc_pdf) and GROQ_KEY:
-    if st.session_state.datos is None:
-        with st.spinner("Procesando estructura de datos..."):
-            texto_acumulado = ""
-            if arc_txt:
-                texto_acumulado += arc_txt.read().decode("latin-1", errors="ignore")
-            if arc_pdf:
-                with fitz.open(stream=arc_pdf.read(), filetype="pdf") as doc:
-                    texto_acumulado += "\n".join([p.get_text() for p in doc])
-            
-            st.session_state.datos = extraccion_quirurgica(texto_acumulado)
+if archivos and GROQ_KEY:
+    texto_total = ""
+    for arc in archivos:
+        if arc.type == "application/pdf":
+            doc = fitz.open(stream=arc.read(), filetype="pdf")
+            texto_total += " ".join([pag.get_text() for pag in doc])
+        else:
+            texto_total += arc.read().decode("latin-1", errors="ignore")
+    
+    # Procesamos el texto combinado de todos los archivos subidos
+    st.session_state.datos_hibridos = limpiar_y_extraer_todo(texto_total)
 
-# Formulario
-if st.session_state.datos:
-    with st.form("editor"):
-        st.subheader("🔍 Confirmación de Datos")
+if "datos_hibridos" in st.session_state and st.session_state.datos_hibridos:
+    with st.form("validador_final"):
+        d = st.session_state.datos_hibridos
         c1, c2, c3, c4 = st.columns(4)
-        pac = c1.text_input("Paciente", st.session_state.datos["pac"])
-        fey = c2.text_input("FEy %", st.session_state.datos["fy"])
-        ddvi = c3.text_input("DDVI mm", st.session_state.datos["dv"])
-        siv = c4.text_input("SIV mm", st.session_state.datos["si"])
-        if st.form_submit_button("🚀 GENERAR INFORME"):
-            st.session_state.datos.update({"pac": pac, "fy": fey, "dv": ddvi, "si": siv})
+        pac = c1.text_input("Paciente", d["pac"])
+        fey = c2.text_input("FEy %", d["fy"])
+        ddvi = c3.text_input("DDVI mm", d["dv"])
+        siv = c4.text_input("SIV mm", d["si"])
+        
+        if st.form_submit_button("🚀 GENERAR INFORME MÉDICO"):
             client = Groq(api_key=GROQ_KEY)
-            prompt = f"Informe médico Dr. Pastore. Paciente: {pac}. DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%."
+            prompt = f"Informe: Paciente {pac}, DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%. Estilo Dr. Pastore."
             res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':prompt}])
-            st.markdown("---")
             st.info(res.choices[0].message.content)
-            st.markdown("**Dr. Francisco A. Pastore**")
