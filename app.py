@@ -4,65 +4,80 @@ from groq import Groq
 import fitz  # PyMuPDF
 import re
 
-# 1. Configuración de API Key
+# 1. Configuración de API Key desde Secrets
 try:
     GROQ_KEY = st.secrets["GROQ_API_KEY"]
 except Exception:
     GROQ_KEY = None
 
-def extraer_dato_especifico(texto, clave):
+def extraer_dato_universal(texto, clave):
     """
-    Extrae datos de formatos tipo tabla CSV: "DDVI","40","mm"
+    Busca datos tanto en formato tabla CSV ("DDVI","40") 
+    como en formato texto estándar (DDVI: 40).
     """
-    # Esta regex busca la clave entre comillas, salta la coma, y captura el número entre comillas
-    patron = rf"\"{clave}\"\s*,\s*\"([\d.,]+)\""
-    match = re.search(patron, texto, re.IGNORECASE)
-    if match:
-        return match.group(1).replace(',', '.')
+    # Formato tabla (comillas y comas como en tu equipo)
+    patron_tabla = rf"\"{clave}\"\s*,\s*\"([\d.,]+)\""
+    match_t = re.search(patron_tabla, texto, re.IGNORECASE)
+    if match_t:
+        return match_t.group(1).replace(',', '.')
     
-    # Si no lo encuentra con comillas, busca formato estándar
-    patron_simple = rf"{clave}.*?[:=\s]\s*([\d.,]+)"
-    match_s = re.search(patron_simple, texto, re.IGNORECASE)
+    # Formato texto estándar
+    patron_txt = rf"{clave}.*?[:=\s]\s*([\d.,]+)"
+    match_s = re.search(patron_txt, texto, re.IGNORECASE)
     if match_s:
         return match_s.group(1).replace(',', '.')
     return ""
 
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
+st.set_page_config(page_title="CardioReport Master", layout="wide")
 st.title("🏥 Asistente de Ecocardiogramas")
 
+# Inicializar sesión para persistencia
 if "datos" not in st.session_state:
     st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
 
 with st.sidebar:
     st.header("1. Carga de Archivos")
-    arc_pdf = st.file_uploader("Subir Informe PDF", type=["pdf"])
-    if st.button("🔄 Nuevo Paciente"):
+    # Restauramos ambos cargadores
+    arc_txt = st.file_uploader("Archivo TXT (Datos crudos)", type=["txt"])
+    arc_pdf = st.file_uploader("Archivo PDF (Nombre/Referencia)", type=["pdf"])
+    
+    if st.button("🔄 Nuevo Paciente / Limpiar"):
         st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
         st.rerun()
 
-if arc_pdf and GROQ_KEY:
+# 2. Procesamiento Inteligente
+if arc_txt and arc_pdf and GROQ_KEY:
+    # Solo procesamos si el estado está vacío (evita borrar lo que el médico escribe)
     if st.session_state.datos["pac"] == "":
-        with st.spinner("Escaneando PDF..."):
+        with st.spinner("Fusionando datos de TXT y PDF..."):
             try:
-                doc = fitz.open(stream=arc_pdf.read(), filetype="pdf")
-                texto_total = "".join([pag.get_text() for pag in doc])
+                # Leer TXT
+                t_raw = arc_txt.read().decode("latin-1", errors="ignore")
                 
-                # Extraer Paciente
-                n_m = re.search(r"Paciente:\s*([^<\r\n]*)", texto_total, re.I)
+                # Leer PDF
+                p_bytes = arc_pdf.read()
+                texto_pdf = ""
+                with fitz.open(stream=p_bytes, filetype="pdf") as doc:
+                    texto_pdf = "".join([pag.get_text() for pag in doc])
                 
-                # Extraer Valores Críticos usando etiquetas exactas de tu equipo
-                ddvi = extraer_dato_especifico(texto_total, "DDVI")
-                siv = extraer_dato_especifico(texto_total, "DDSIV")
-                
-                # Lógica de FEy: Si no hay FE específica, usamos FA (Fracción de Acortamiento)
-                # En el reporte de Alicia, FA es 38, lo que equivale a una FEy de ~67%
-                fey = extraer_dato_especifico(texto_total, "FE") or extraer_dato_especifico(texto_total, "EF")
-                fa = extraer_dato_especifico(texto_total, "FA")
-                
-                if not fey and fa:
-                    # Estimación simple si solo hay Fracción de Acortamiento
-                    fey = str(round(float(fa) * 1.7)) 
+                # Unimos ambos textos para la búsqueda
+                texto_total = t_raw + "\n" + texto_pdf
 
+                # Extraer Paciente (del PDF preferentemente)
+                n_m = re.search(r"(?:Paciente|Nombre pac\.|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
+                
+                # Extraer Valores Técnicos
+                ddvi = extraer_dato_universal(texto_total, "DDVI")
+                siv = extraer_dato_universal(texto_total, "DDSIV")
+                
+                # Lógica de FEy: Buscar FEy, si no está, buscar EF, si no buscar FA
+                fey = extraer_dato_universal(texto_total, "FE") or extraer_dato_universal(texto_total, "EF")
+                if not fey:
+                    fa = extraer_dato_universal(texto_total, "FA")
+                    if fa: # Si Alicia tiene FA 38%, calculamos FEy ~65-67%
+                        fey = str(round(float(fa) * 1.73))
+
+                # Guardar en session_state
                 st.session_state.datos = {
                     "pac": n_m.group(1).strip().upper() if n_m else "DESCONOCIDO",
                     "dv": ddvi,
@@ -70,35 +85,46 @@ if arc_pdf and GROQ_KEY:
                     "fy": fey
                 }
             except Exception as e:
-                st.error(f"Error técnico: {e}")
+                st.error(f"Error al procesar: {e}")
 
-    # FORMULARIO DE EDICIÓN
-    with st.form("editor"):
-        st.subheader("🔍 Datos Detectados")
+# 3. Interfaz de Validación (Carga los datos del session_state)
+if st.session_state.datos["pac"] != "":
+    with st.form("validador_final"):
+        st.subheader("🔍 Validar Datos Extraídos")
         c1, c2, c3, c4 = st.columns(4)
-        pac = c1.text_input("Paciente", st.session_state.datos["pac"])
-        fey = c2.text_input("FEy %", st.session_state.datos["fy"])
-        ddvi = c3.text_input("DDVI mm", st.session_state.datos["dv"])
-        siv = c4.text_input("SIV mm", st.session_state.datos["si"])
         
-        generar = st.form_submit_button("🚀 GENERAR INFORME")
+        pac_edit = c1.text_input("Paciente", st.session_state.datos["pac"])
+        fey_edit = c2.text_input("FEy %", st.session_state.datos["fy"])
+        ddvi_edit = c3.text_input("DDVI mm", st.session_state.datos["dv"])
+        siv_edit = c4.text_input("SIV mm", st.session_state.datos["si"])
+        
+        submit = st.form_submit_button("🚀 GENERAR INFORME")
 
-    if generar:
-        if not fey or not ddvi:
-            st.error("⚠️ Error: El sistema no detectó automáticamente la FEy o el DDVI. Por favor, ingréselos manualmente antes de continuar.")
+    if submit:
+        # Actualizamos el estado con lo que el médico corrigió
+        st.session_state.datos.update({"pac": pac_edit, "fy": fey_edit, "dv": ddvi_edit, "si": siv_edit})
+        
+        if not fey_edit or not ddvi_edit:
+            st.warning("⚠️ Complete los datos manualmente si el sistema no los detectó.")
         else:
             client = Groq(api_key=GROQ_KEY)
             prompt = f"""
-            Actúa como el Dr. Francisco Pastore. Redacta las conclusiones de un ecocardiograma.
-            Paciente: {pac}. Datos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%.
+            Actúa como el Dr. Francisco Pastore. Redacta el informe:
+            Paciente: {pac_edit}. 
+            Datos: DDVI {ddvi_edit}mm, SIV {siv_edit}mm, FEy {fey_edit}%.
             
-            Instrucciones:
+            ESTILO:
+            - Técnico, conciso, formal.
             - Si FEy > 55%: 'Función sistólica global conservada'.
-            - Si SIV >= 11mm: 'Remodelado concéntrico del VI'.
-            - Usa lenguaje médico formal y directo.
+            - Si SIV >= 11mm: 'Remodelado concéntrico'.
             """
             with st.spinner("Redactando..."):
                 res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':prompt}])
-                st.success("Informe Generado")
+                st.markdown("---")
                 st.info(res.choices[0].message.content)
                 st.markdown("**Dr. Francisco A. Pastore**")
+
+elif not GROQ_KEY:
+    st.error("Configura la GROQ_API_KEY en Secrets.")
+else:
+    st.info("👋 Por favor, carga el TXT y el PDF para comenzar.")
