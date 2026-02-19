@@ -1,208 +1,120 @@
 
 import streamlit as st
-import fitz  # PyMuPDF
+from groq import Groq
+import fitz
 import re
-import tempfile
-import os
-from docx import Document
-from docx.shared import Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+# 1. Configuración de API Key
+try:
+    GROQ_KEY = st.secrets["GROQ_API_KEY"]
+except:
+    GROQ_KEY = None
 
-# ------------------------------
-# FUNCIONES AUXILIARES
-# ------------------------------
+def parser_sonoscape_senior(texto_txt):
+    """
+    Parser estructural que extrae mediciones en modo M y las asigna
+    según rangos biológicos lógicos para evitar errores de orden.
+    """
+    datos = {"pac": "DESCONOCIDO", "dv": "", "si": "", "fy": ""}
+    
+    # --- 1. Extraer Bloque Demográfico ---
+    # El SonoScape usa etiquetas claras en la cabecera
+    match_nombre = re.search(r"PatientName\s*,\s*\"([^\"]+)\"", texto_txt)
+    if match_nombre:
+        datos["pac"] = match_nombre.group(1).replace('^', ' ').strip().upper()
 
-def safe(val):
-    if not val or str(val).strip() == "":
-        return "No evaluable"
-    return val
+    # --- 2. Extraer Mediciones Modo M (Estructural) ---
+    # Buscamos valores que acompañen a "cm" y "M"
+    # El regex captura el número en el primer grupo
+    valores_cm = re.findall(r"\"([\d.]+)\"\s*,\s*\"cm\"\s*,\s*\"M\"", texto_txt)
+    
+    # Convertimos a floats y a milímetros para procesar
+    mediciones = [float(v) * 10 for v in valores_cm]
 
+    if mediciones:
+        # Lógica de asignación por rangos (Ventana Biológica)
+        for m in mediciones:
+            # Si mide entre 32 y 70mm, es altamente probable que sea el DDVI
+            if 32 <= m <= 75:
+                datos["dv"] = str(round(m, 1))
+            # Si mide entre 6 y 16mm, es altamente probable que sea el SIV (Septum)
+            elif 6 <= m <= 18:
+                datos["si"] = str(round(m, 1))
 
-def extraer_dato_universal(texto, clave):
-    patron_tabla = rf"\"{clave}\"\s*,\s*\"([\d.,]+)\""
-    match_t = re.search(patron_tabla, texto, re.IGNORECASE)
-    if match_t:
-        return match_t.group(1).replace(',', '.')
+    # --- 3. Extraer Función Sistólica (FEy) ---
+    # Buscamos el valor que tenga la unidad "%"
+    match_fey = re.search(r"\"([\d.]+)\"\s*,\s*\"%\"", texto_txt)
+    if match_fey:
+        datos["fy"] = match_fey.group(1)
+    else:
+        # Si no hay %, buscamos FA (Fracción de Acortamiento) y estimamos
+        match_fa = re.search(r"\"FA\".*?\"([\d.]+)\"", texto_txt, re.I)
+        if match_fa:
+            fa_val = float(match_fa.group(1))
+            datos["fy"] = str(round(fa_val * 1.7)) # Estimación de Teichholz rápida
 
-    patron_txt = rf"{clave}.*?[:=\s]\s*([\d.,]+)"
-    match_s = re.search(patron_txt, texto, re.IGNORECASE)
-    if match_s:
-        return match_s.group(1).replace(',', '.')
+    return datos
 
-    return ""
-
-
-def extract_images_from_pdf(pdf_bytes, output_dir):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    os.makedirs(output_dir, exist_ok=True)
-    image_paths = []
-
-    for page_index in range(len(doc)):
-        page = doc[page_index]
-        images = page.get_images(full=True)
-
-        for img_index, img in enumerate(images):
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            ext = base_image["ext"]
-
-            image_path = os.path.join(
-                output_dir,
-                f"img_{page_index}_{img_index}.{ext}"
-            )
-
-            with open(image_path, "wb") as f:
-                f.write(image_bytes)
-
-            image_paths.append(image_path)
-
-    return image_paths
-
-
-def build_word_report(datos, pdf_bytes, output_path, tmpdir):
-
-    doc = Document()
-
-    doc.add_heading("Ecocardiograma 2D y Doppler Cardíaco Color", level=1)
-
-    doc.add_paragraph(f"Paciente: {datos['pac']}")
-    doc.add_paragraph("")
-
-    doc.add_heading("MEDICIONES", level=2)
-    doc.add_paragraph(f"DDVI: {safe(datos['dv'])} mm")
-    doc.add_paragraph(f"SIV: {safe(datos['si'])} mm")
-    doc.add_paragraph(f"Fracción de eyección: {safe(datos['fy'])} %")
-
-    doc.add_heading("CONCLUSIÓN", level=2)
-
-    try:
-        fey = float(datos["fy"])
-        if fey > 55:
-            doc.add_paragraph("Función sistólica global conservada.")
-        else:
-            doc.add_paragraph("Función sistólica global disminuida.")
-    except:
-        doc.add_paragraph("Función sistólica: No evaluable.")
-
-    try:
-        siv = float(datos["si"])
-        if siv >= 11:
-            doc.add_paragraph("Remodelado concéntrico.")
-    except:
-        pass
-
-    # ANEXO DE IMÁGENES
-    images = extract_images_from_pdf(pdf_bytes, tmpdir)
-
-    if images:
-        doc.add_page_break()
-        doc.add_heading("ANEXO DE IMÁGENES", level=2)
-
-        table = doc.add_table(rows=4, cols=2)
-
-        img_index = 0
-        for row in table.rows:
-            for cell in row.cells:
-                if img_index < len(images):
-                    paragraph = cell.paragraphs[0]
-                    run = paragraph.add_run()
-                    run.add_picture(images[img_index], width=Inches(2.5))
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    img_index += 1
-
-    doc.save(output_path)
-
-
-# ------------------------------
-# STREAMLIT APP
-# ------------------------------
-
-st.set_page_config(page_title="CardioReport Master", layout="wide")
-st.title("🏥 Generador de Informe Ecocardiográfico")
+# --- INTERFAZ DE STREAMLIT ---
+st.set_page_config(page_title="CardioReport SonoScape", layout="wide")
+st.title("🏥 Asistente de Informes SonoScape E3")
 
 if "datos" not in st.session_state:
     st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
 
 with st.sidebar:
-    st.header("Carga de Archivos")
-    arc_txt = st.file_uploader("Archivo TXT", type=["txt"])
-    arc_pdf = st.file_uploader("Archivo PDF", type=["pdf"])
-
-    if st.button("Nuevo Paciente"):
+    st.header("Carga de Datos")
+    arc_txt = st.file_uploader("Subir TXT (SonoScape)", type=["txt"])
+    arc_pdf = st.file_uploader("Subir PDF (Nombre/Referencia)", type=["pdf"])
+    if st.button("Limpiar Sesión"):
         st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
         st.rerun()
 
-
-if arc_txt and arc_pdf:
-
+# Procesamiento
+if arc_txt and GROQ_KEY:
     if st.session_state.datos["pac"] == "":
-        with st.spinner("Procesando archivos..."):
+        with st.spinner("Parseando estructura SonoScape..."):
+            raw_txt = arc_txt.read().decode("latin-1", errors="ignore")
+            extraidos = parser_sonoscape_senior(raw_txt)
+            
+            # Refuerzo de nombre con PDF
+            if arc_pdf:
+                try:
+                    with fitz.open(stream=arc_pdf.read(), filetype="pdf") as doc:
+                        text_pdf = "".join([p.get_text() for p in doc])
+                        n_m = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\n]*)", text_pdf, re.I)
+                        if n_m: extraidos["pac"] = n_m.group(1).strip().upper()
+                except: pass
+            
+            st.session_state.datos = extraidos
 
-            t_raw = arc_txt.read().decode("latin-1", errors="ignore")
-
-            p_bytes = arc_pdf.read()
-            texto_pdf = ""
-            with fitz.open(stream=p_bytes, filetype="pdf") as doc:
-                texto_pdf = "".join([pag.get_text() for pag in doc])
-
-            texto_total = t_raw + "\n" + texto_pdf
-
-            n_m = re.search(r"(?:Paciente|Nombre pac\.|Nombre)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
-
-            ddvi = extraer_dato_universal(texto_total, "DDVI")
-            siv = extraer_dato_universal(texto_total, "DDSIV")
-
-            fey = extraer_dato_universal(texto_total, "FE") or extraer_dato_universal(texto_total, "EF")
-
-            st.session_state.datos = {
-                "pac": n_m.group(1).strip().upper() if n_m else "DESCONOCIDO",
-                "dv": ddvi,
-                "si": siv,
-                "fy": fey
-            }
-
-
+# Formulario de Validación
 if st.session_state.datos["pac"] != "":
+    with st.form("editor"):
+        st.subheader("🔍 Revisión de Datos Estructurales")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        pac = col1.text_input("Paciente", st.session_state.datos["pac"])
+        fey = col2.text_input("FEy %", st.session_state.datos["fy"])
+        ddvi = col3.text_input("DDVI mm", st.session_state.datos["dv"])
+        siv = col4.text_input("SIV mm", st.session_state.datos["si"])
+        
+        generar = st.form_submit_button("🚀 GENERAR INFORME")
 
-    with st.form("validador"):
-        st.subheader("Validar Datos Extraídos")
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        pac_edit = c1.text_input("Paciente", st.session_state.datos["pac"])
-        fey_edit = c2.text_input("FEy %", st.session_state.datos["fy"])
-        ddvi_edit = c3.text_input("DDVI mm", st.session_state.datos["dv"])
-        siv_edit = c4.text_input("SIV mm", st.session_state.datos["si"])
-
-        submit = st.form_submit_button("Generar Informe Word")
-
-    if submit:
-
-        st.session_state.datos.update({
-            "pac": pac_edit,
-            "fy": fey_edit,
-            "dv": ddvi_edit,
-            "si": siv_edit
-        })
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = f"{tmpdir}/Informe_Ecocardiograma.docx"
-
-            build_word_report(
-                st.session_state.datos,
-                arc_pdf.getvalue(),
-                output_path,
-                tmpdir
-            )
-
-            with open(output_path, "rb") as f:
-                st.download_button(
-                    "📄 Descargar Informe en Word",
-                    f,
-                    file_name="Informe_Ecocardiograma.docx"
-                )
-
-else:
-    st.info("Carga el TXT y el PDF para comenzar.")
+    if generar:
+        st.session_state.datos.update({"pac": pac, "fy": fey, "dv": ddvi, "si": siv})
+        client = Groq(api_key=GROQ_KEY)
+        
+        prompt = f"""
+        Actúa como el Dr. Francisco Pastore. Redacta conclusiones de ecocardiograma.
+        Paciente: {pac}. Datos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%.
+        - Si SIV >= 11mm: 'Remodelado concéntrico'.
+        - Si FEy > 55%: 'Función sistólica global conservada'.
+        Sé breve y profesional.
+        """
+        
+        with st.spinner("Redactando..."):
+            res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':prompt}])
+            st.markdown("---")
+            st.info(res.choices[0].message.content)
+            st.markdown("**Dr. Francisco A. Pastore**")
