@@ -6,140 +6,154 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# Función de búsqueda mejorada para el formato específico de tu ecógrafo
-def extraer_dato_ecografo(texto_completo, etiquetas):
-    for etiqueta in etiquetas:
-        # Buscamos el bloque que contiene la etiqueta y capturamos el siguiente 'value ='
-        patron = rf"{etiqueta}.*?value\s*=\s*([\d.]+)"
-        match = re.search(patron, texto_completo, re.S | re.I)
+def extraer_con_sinonimos(texto_txt, lista_sinonimos):
+    """
+    Busca el valor numérico que sigue a cualquiera de los sinónimos.
+    Estructura del ecógrafo: Parámetro ... value = 40.0
+    """
+    for s in lista_sinonimos:
+        # Buscamos el sinónimo y capturamos el valor después de 'value =' 
+        # aunque haya saltos de línea (re.S)
+        patron = rf"{s}.*?value\s*=\s*([\d.]+)"
+        match = re.search(patron, texto_txt, re.S | re.I)
         if match:
             try:
-                # Convertimos a entero para evitar el .0 innecesario
-                return str(int(float(match.group(1))))
+                # Limpiamos el decimal (de 40.0 a 40)
+                valor = match.group(1)
+                return str(int(float(valor)))
             except:
                 return match.group(1)
     return ""
 
-def motor_40_9(txt_raw, pdf_bytes):
-    # Valores por defecto para evitar errores de aplicación
-    d = {"pac": "PACIENTE", "ed": "--", "fy": "60", "dv": "--", "dr": "--", "ai": "--", "si": "--", "fecha": "--"}
+def procesar_archivos(txt_content, pdf_bytes):
+    # Diccionario inicial con valores por defecto para evitar que la app se rompa
+    res = {
+        "paciente": "No encontrado", "edad": "--", "fecha": "--",
+        "ddvi": "--", "siv": "--", "fey": "60", "ao": "--", "ai": "--"
+    }
     
-    # 1. Prioridad PDF: Nombre y Fecha (Más limpios)
+    # 1. LEER PDF (Prioridad para Datos Personales)
     try:
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             texto_pdf = doc[0].get_text()
+            # Fecha de estudio
             f_m = re.search(r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", texto_pdf)
-            if f_m: d["fecha"] = f_m.group(1)
+            if f_m: res["fecha"] = f_m.group(1)
+            # Nombre del paciente
             n_m = re.search(r"(?:Nombre pac\.|Paciente)\s*[:=-]?\s*([^<\r\n]*)", texto_pdf, re.I)
-            if n_m: d["pac"] = n_m.group(1).strip().upper()
+            if n_m: res["paciente"] = n_m.group(1).strip().upper()
     except: pass
 
-    # 2. Prioridad TXT: Medidas Técnicas (Más precisas)
-    if txt_raw:
-        # Edad (Age = 86Y)
-        e_m = re.search(r"Age\s*=\s*(\d+)", txt_raw, re.I)
-        if e_m: d["ed"] = e_m.group(1)
+    # 2. LEER TXT (Prioridad para Medidas con Sinónimos)
+    if txt_content:
+        # Edad
+        e_m = re.search(r"Age\s*=\s*(\d+)", txt_content, re.I)
+        if e_m: res["edad"] = e_m.group(1)
 
-        # Mapeo por bloques técnicos (Sinónimos detectados en tus archivos)
-        d["dv"] = extraer_dato_ecografo(txt_raw, ["LVIDd", "DDVI", "VId d"])
-        d["si"] = extraer_dato_ecografo(txt_raw, ["IVSd", "DDSIV", "Septum"])
-        d["dr"] = extraer_dato_ecografo(txt_raw, ["AORootDiam", "DRAO", "Ao Root"])
-        d["ai"] = extraer_dato_ecografo(txt_raw, ["LADiam", "DDAI", "LA Diam"])
+        # MAPEO TÉCNICO DE TU ECÓGRAFO
+        res["ddvi"] = extraer_con_sinonimos(txt_content, ["LVIDd", "DDVI", "VId d"])
+        res["siv"] = extraer_con_sinonimos(txt_content, ["IVSd", "DDSIV", "Septum", "SIVd"])
+        res["ao"] = extraer_con_sinonimos(txt_content, ["AORootDiam", "DRAO", "Ao Root"])
+        res["ai"] = extraer_con_sinonimos(txt_content, ["LADiam", "DDAI", "LA Diam"])
         
-        # FEy (Buscamos EF o FA)
-        fey_val = extraer_dato_ecografo(txt_raw, ["EF", "LVEF", "FA"])
-        if fey_val: d["fy"] = fey_val
+        # FEy (Fracción de eyección)
+        fey_val = extraer_con_sinonimos(txt_content, ["LVEF", "EF", "FA"])
+        if fey_val: res["fey"] = fey_val
 
-    return d
+    return res
 
-def crear_informe_word(texto_ia, dt, fotos):
+def generar_word_final(reporte, d, fotos):
     doc = Document()
     doc.styles['Normal'].font.name, doc.styles['Normal'].font.size = 'Arial', Pt(11)
     
-    # Título
-    t_p = doc.add_paragraph()
-    t_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    t_p.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
+    # Encabezado
+    t_par = doc.add_paragraph()
+    t_par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t_par.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR").bold = True
     
-    # Tabla Datos Personales
+    # Tabla Datos
     t1 = doc.add_table(rows=2, cols=3); t1.style = 'Table Grid'
-    l1 = [f"PACIENTE: {dt['pac']}", f"EDAD: {dt['ed']} años", f"FECHA: {dt['fecha']}", "PESO: --", "ALTURA: --", "BSA: --"]
-    for i, texto in enumerate(l1): t1.cell(i//3, i%3).text = texto
+    d_list = [f"PACIENTE: {d['paciente']}", f"EDAD: {d['edad']} años", f"FECHA: {d['fecha']}", "PESO: --", "ALTURA: --", "BSA: --"]
+    for i, texto in enumerate(d_list): t1.cell(i//3, i%3).text = texto
     
     doc.add_paragraph("\n")
     # Tabla Medidas
     t2 = doc.add_table(rows=5, cols=2); t2.style = 'Table Grid'
-    meds = [("DDVI", f"{dt['dv']} mm"), ("Raíz Aórtica", f"{dt['dr']} mm"), ("Aurícula Izq.", f"{dt['ai']} mm"), ("Septum", f"{dt['si']} mm"), ("FEy", f"{dt['fy']} %")]
-    for i, (n, v) in enumerate(meds):
+    m_list = [("DDVI", f"{d['ddvi']} mm"), ("Raíz Aórtica", f"{d['ao']} mm"), ("Aurícula Izq.", f"{d['ai']} mm"), ("Septum", f"{d['siv']} mm"), ("FEy", f"{d['fey']} %")]
+    for i, (n, v) in enumerate(m_list):
         t2.cell(i,0).text, t2.cell(i,1).text = n, v
     
     doc.add_paragraph("\n")
-    # Texto redactado
-    for linea in texto_ia.split('\n'):
-        linea = linea.strip().replace('*', '')
-        if not linea or any(x in linea.lower() for x in ["paciente", "dr.", "mn "]): continue
-        par = doc.add_paragraph(); par.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        if any(linea.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]):
-            par.add_run(linea).bold = True
+    # Redacción Médica
+    for line in reporte.split('\n'):
+        line = line.strip().replace('*', '')
+        if not line or any(x in line.lower() for x in ["paciente", "dr.", "mn "]): continue
+        p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        if any(line.upper().startswith(h) for h in ["I.", "II.", "III.", "IV.", "CONCL"]):
+            p.add_run(line).bold = True
         else:
-            par.add_run(linea)
-    
+            p.add_run(line)
+            
     # Firma
-    f = doc.add_paragraph(); f.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    f.add_run("\n\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
+    f_p = doc.add_paragraph(); f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    f_p.add_run("\n\n__________________________\nDr. FRANCISCO ALBERTO PASTORE\nMN 74144").bold = True
     
+    # Fotos
     if fotos:
         doc.add_page_break()
         tf = doc.add_table(rows=(len(fotos)+1)//2, cols=2)
-        for i, img_data in enumerate(fotos):
-            celda = tf.cell(i//2, i%2).paragraphs[0]
-            celda.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            celda.add_run().add_picture(io.BytesIO(img_data), width=Inches(2.5))
+        for i, img in enumerate(fotos):
+            c = tf.cell(i//2, i%2).paragraphs[0]
+            c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            c.add_run().add_picture(io.BytesIO(img), width=Inches(2.5))
             
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
 
-# --- INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="CardioPro 40.9", layout="wide")
-st.title("🏥 CardioReport Pro v40.9")
+# --- INTERFAZ ---
+st.set_page_config(page_title="CardioPro 41.0", layout="wide")
+st.title("🏥 CardioReport Pro v41.0")
 
-u_txt = st.file_uploader("1. Archivo TXT", type=["txt"])
-u_pdf = st.file_uploader("2. Archivo PDF", type=["pdf"])
-key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("Groq API Key", type="password")
+col_a, col_b = st.columns(2)
+u_txt = col_a.file_uploader("1. Archivo de Texto (TXT)", type=["txt"])
+u_pdf = col_b.file_uploader("2. Archivo PDF", type=["pdf"])
+api_key = st.secrets.get("GROQ_API_KEY") or st.sidebar.text_input("Groq API Key", type="password")
 
-if u_txt and u_pdf and key:
+if u_txt and u_pdf and api_key:
     raw_txt = u_txt.read().decode("latin-1", errors="ignore")
-    datos = motor_40_9(raw_txt, u_pdf.getvalue())
+    datos = procesar_archivos(raw_txt, u_pdf.getvalue())
     
-    st.subheader("📋 Validación de Datos")
+    st.subheader("🔍 Validar datos antes de generar")
     c1, c2, c3 = st.columns(3)
-    # Estos inputs permiten corregir a mano si algo falla
-    v_pac = c1.text_input("Paciente", datos["pac"])
-    v_fey = c1.text_input("FEy %", datos["fy"])
-    v_eda = c2.text_input("Edad", datos["ed"])
-    v_dvi = c2.text_input("DDVI mm", datos["dv"])
+    # Permite edición manual si algún dato no se levantó
+    v_pac = c1.text_input("Paciente", datos["paciente"])
+    v_fey = c1.text_input("FEy (%)", datos["fey"])
+    v_eda = c2.text_input("Edad", datos["edad"])
+    v_dvi = c2.text_input("DDVI (mm)", datos["ddvi"])
     v_fec = c3.text_input("Fecha", datos["fecha"])
-    v_siv = c3.text_input("SIV mm", datos["si"])
+    v_siv = c3.text_input("Septum (mm)", datos["siv"])
 
-    if st.button("🚀 GENERAR INFORME FINAL"):
-        client = Groq(api_key=key)
-        px = f"Redacta un informe médico profesional. Estructura: I. ANATOMÍA, II. FUNCIÓN VENTRICULAR, III. VÁLVULAS, IV. CONCLUSIÓN. Datos: DDVI {v_dvi}mm, SIV {v_siv}mm, FEy {v_fey}%. Sin nombre de paciente."
-        
-        try:
-            res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":px}], temperature=0)
-            texto_ia = res.choices[0].message.content
-            
-            # Imágenes
-            img_list = []
-            with fitz.open(stream=u_pdf.getvalue(), filetype="pdf") as pdf_doc:
-                for pagina in pdf_doc:
-                    for img in pagina.get_images():
-                        img_list.append(pdf_doc.extract_image(img[0])["image"])
-            
-            # Construir diccionario para el Word con lo validado en pantalla
-            d_word = {"pac":v_pac, "ed":v_eda, "fy":v_fey, "dv":v_dvi, "si":v_siv, "dr":datos["dr"], "ai":datos["ai"], "fecha":v_fec}
-            
-            word_file = crear_informe_word(texto_ia, d_word, img_list)
-            st.download_button("📥 DESCARGAR INFORME WORD", word_file, f"Informe_{v_pac}.docx")
-            st.success("¡Informe generado con éxito!")
-        except Exception as e:
-            st.error(f"Error: {e}")
+    if st.button("🚀 GENERAR INFORME"):
+        with st.spinner("Redactando informe..."):
+            try:
+                client = Groq(api_key=api_key)
+                # Creamos el diccionario final con lo que hay en pantalla
+                d_final = {"paciente":v_pac, "edad":v_eda, "fecha":v_fec, "fey":v_fey, "ddvi":v_dvi, "siv":v_siv, "ao":datos["ao"], "ai":datos["ai"]}
+                
+                # Prompt para la IA
+                prompt = f"Escribe un informe de ecocardiograma. Secciones: I. ANATOMÍA, II. FUNCIÓN VENTRICULAR, III. VÁLVULAS Y DOPPLER, IV. CONCLUSIÓN. Datos técnicos: DDVI {v_dvi}mm, SIV {v_siv}mm, FEy {v_fey}%. Estilo formal médico."
+                
+                comp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":prompt}], temperature=0)
+                texto_ia = comp.choices[0].message.content
+                
+                # Extraer fotos
+                fotos = []
+                with fitz.open(stream=u_pdf.getvalue(), filetype="pdf") as pdf:
+                    for pag in pdf:
+                        for img_index in pag.get_images():
+                            fotos.append(pdf.extract_image(img_index[0])["image"])
+                
+                doc_bytes = generar_word_final(texto_ia, d_final, fotos)
+                st.download_button("📥 DESCARGAR WORD", doc_bytes, f"Informe_{v_pac}.docx")
+                st.success("¡Informe listo!")
+            except Exception as e:
+                st.error(f"Error en el proceso: {e}")
