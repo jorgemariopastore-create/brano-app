@@ -1,6 +1,3 @@
 streamlit
-groq
-pymupdf
-docx2txt
 python-docx
-beautifulsoup4
+pymupdf
