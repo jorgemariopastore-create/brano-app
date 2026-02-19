@@ -1,83 +1,88 @@
 
 import streamlit as st
 from groq import Groq
-import fitz # PyMuPDF
+import fitz  # PyMuPDF
 import re
 
-# --- CONFIGURACIÓN DE LA INTERFAZ ---
+# --- 1. INTERFAZ INALTERABLE ---
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 st.title("🏥 Sistema de Informes Dr. Pastore")
 
-# Función Senior para limpiar TODO
-def reset_completo():
-    for key in st.session_state.keys():
-        del st.session_state[key]
-    st.rerun()
-
-# --- LÓGICA DE EXTRACCIÓN REFORZADA ---
-def extraer_datos_pdf(file_bytes):
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    texto = " ".join([pag.get_text() for pag in doc])
-    t = re.sub(r'\s+', ' ', texto) # Limpieza de espacios
+# --- 2. MOTOR DE EXTRACCIÓN (NIVEL SENIOR) ---
+def extraer_datos(archivo_subido):
+    # Leemos los bytes del archivo directamente
+    bytes_pdf = archivo_subido.getvalue()
+    doc = fitz.open(stream=bytes_pdf, filetype="pdf")
+    texto_completo = ""
+    for pagina in doc:
+        texto_completo += pagina.get_text()
     
-    # Buscamos datos con patrones más agresivos
+    # Limpiamos el texto para que la búsqueda sea infalible
+    t = " ".join(texto_completo.split())
+    
+    # Diccionario de resultados
     d = {"pac": "", "fec": "", "edad": "", "ddvi": "", "dsvi": "", "siv": "", "pp": "", "fey": ""}
     
-    # Nombre: Busca después de "Paciente:" hasta encontrar una fecha o salto
-    m_pac = re.search(r"Paciente:\s*([A-Z\s]+?)(?=\s*(Fecha|Edad|DNI|$))", t, re.I)
-    if m_pac: d["pac"] = m_pac.group(1).strip()
-    
-    # Métricas Técnicas
-    patrones = {
-        "ddvi": r"DDVI\s*(\d+)", "dsvi": r"DSVI\s*(\d+)", 
-        "siv": r"(?:SIV|DDSIV)\s*(\d+)", "pp": r"(?:PP|DDPP)\s*(\d+)",
+    # Regex mejoradas para evitar campos vacíos
+    regex_map = {
+        "pac": r"Paciente:\s*([A-Z\s]+?)(?:Fecha|Edad|$)",
+        "fec": r"Fecha:\s*(\d{2}/\d{2}/\d{4})",
+        "ddvi": r"DDVI\s*(\d+)",
+        "dsvi": r"DSVI\s*(\d+)",
+        "siv": r"(?:SIV|DDSIV)\s*(\d+)",
+        "pp": r"(?:PP|DDPP)\s*(\d+)",
         "fey": r"(?:FEy|FA|eyeccion)\s*(\d+)"
     }
-    for k, v in patrones.items():
-        res = re.search(v, t, re.I)
-        if res: d[k] = res.group(1)
+    
+    for clave, patron in regex_map.items():
+        match = re.search(patron, t, re.I)
+        if match:
+            d[clave] = match.group(1).strip()
     return d
 
-# --- SIDEBAR ---
+# --- 3. LÓGICA DE CONTROL DE ESTADO ---
 with st.sidebar:
-    st.header("Control de Archivos")
-    archivo = st.file_uploader("Subir PDF del Estudio", type=["pdf"])
-    if st.button("🗑️ LIMPIAR MEMORIA (Reset)"):
-        reset_completo()
+    st.header("Panel de Control")
+    archivo = st.file_uploader("Cargar estudio PDF", type=["pdf"])
+    if st.button("🗑️ Resetear y Limpiar"):
+        st.session_state.clear()
+        st.rerun()
 
-# --- CUERPO PRINCIPAL ---
+# --- 4. RENDERIZADO DE LA APLICACIÓN ---
 if archivo:
-    # Creamos un ID único para el archivo
-    file_id = f"{archivo.name}_{archivo.size}"
+    # Generamos un ID único por archivo para evitar que los datos se "peguen"
+    id_actual = f"{archivo.name}_{archivo.size}"
     
-    # Si el archivo cambió o no hay datos, extraemos
-    if st.session_state.get("last_id") != file_id:
-        with st.spinner("Analizando nuevo paciente..."):
-            st.session_state.datos = extraer_datos_pdf(archivo.read())
-            st.session_state.last_id = file_id
-            st.rerun()
+    if st.session_state.get("id_archivo") != id_actual:
+        # Extraemos datos y forzamos el guardado en la sesión
+        st.session_state.datos_paciente = extraer_datos(archivo)
+        st.session_state.id_archivo = id_actual
+        st.rerun()
 
-    # Si tenemos datos, mostramos la validación
-    if "datos" in st.session_state:
-        d = st.session_state.datos
-        with st.form("validador_senior"):
-            st.subheader(f"Validación de Datos: {d['pac'] if d['pac'] else 'Nuevo Paciente'}")
-            
-            c1, c2, c3 = st.columns([2, 1, 1])
-            pac = c1.text_input("Paciente", value=d["pac"])
-            fec = c2.text_input("Fecha", value=d["fec"])
-            edad = c3.text_input("Edad", value=d["edad"])
-            
-            st.markdown("### Métricas Técnicas")
-            c4, c5, c6, c7, c8 = st.columns(5)
-            # Aquí el médico puede corregir si el PDF leyó mal
-            ddvi = c4.text_input("DDVI", value=d["ddvi"])
-            dsvi = c5.text_input("DSVI", value=d["dsvi"])
-            siv = c6.text_input("SIV", value=d["siv"])
-            pp = c7.text_input("PP", value=d["pp"])
-            fey = c8.text_input("FEy %", value=d["fey"])
-            
-            if st.form_submit_button("🚀 GENERAR INFORME"):
-                st.success("Informe en proceso...")
+    # Si llegamos aquí, los datos DEBEN existir en session_state
+    datos = st.session_state.datos_paciente
+
+    with st.form("formulario_medico"):
+        st.subheader(f"Validación: {datos['pac'] if datos['pac'] else 'Paciente sin nombre'}")
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        nombre = col1.text_input("Paciente", value=datos["pac"])
+        fecha = col2.text_input("Fecha", value=datos["fec"])
+        edad = col3.text_input("Edad", value=datos.get("edad", ""))
+        
+        st.write("---")
+        st.markdown("### Parámetros del Ecocardiograma")
+        
+        
+        c1, c2, c3, c4, c5 = st.columns(5)
+        ddvi = c1.text_input("DDVI", value=datos["ddvi"])
+        dsvi = c2.text_input("DSVI", value=datos["dsvi"])
+        siv = c3.text_input("SIV", value=datos["siv"])
+        pp = c4.text_input("PP", value=datos["pp"])
+        fey = c5.text_input("FEy %", value=datos["fey"])
+        
+        if st.form_submit_button("🚀 GENERAR INFORME FINAL"):
+            st.success("Procesando informe con IA...")
+
 else:
-    st.info("👋 Dr. Pastore: Por favor, cargue un archivo PDF para comenzar.")
+    st.info("👋 Bienvenida/o. Por favor, suba un archivo PDF para visualizar los datos.")
