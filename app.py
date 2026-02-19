@@ -4,57 +4,55 @@ from groq import Groq
 import fitz
 import re
 
-# 1. Configuración de API Key
+# 1. API Key
 try:
     GROQ_KEY = st.secrets["GROQ_API_KEY"]
 except:
     GROQ_KEY = None
 
-def parser_sonoscape_ultra_robusto(texto_txt):
+def extraccion_quirurgica(texto_sucio):
     """
-    Parser de última instancia: Extrae todos los números entre comillas
-    y los clasifica por rangos médicos reales.
+    Limpia el texto de comillas, saltos de línea y basura de tablas.
+    Luego extrae los datos basándose en el formato del SonoScape E3.
     """
-    datos = {"pac": "DESCONOCIDO", "dv": "", "si": "", "fy": ""}
+    # Limpieza total: convertimos todo a una tira separada por comas
+    t = texto_sucio.replace('"', '').replace('\n', ',').replace('\r', ',').replace(' ', '')
     
-    # --- 1. Extraer Paciente ---
-    # Busca PatientName seguido de cualquier cosa entre comillas
-    m_pac = re.search(r"PatientName\s*,\s*\"([^\"]+)\"", texto_txt, re.I)
+    datos = {"pac": "NO DETECTADO", "dv": "", "si": "", "fy": ""}
+    
+    # 1. Extraer Paciente (Busca después de PatientName o Paciente)
+    m_pac = re.search(r"(?:PatientName|Paciente|Nombre),?([^,]+)", t, re.I)
     if m_pac:
         datos["pac"] = m_pac.group(1).replace('^', ' ').strip().upper()
 
-    # --- 2. Extraer todos los valores numéricos entre comillas ---
-    # El SonoScape pone casi todo así: "40","mm" o "11","mm"
-    # Buscamos números decimales o enteros que estén dentro de comillas
-    todos_los_valores = re.findall(r"\"([\d.]+)\"", texto_txt)
-    
-    # Convertimos a float para evaluar rangos biológicos
-    candidatos = []
-    for v in todos_los_valores:
-        try:
-            val = float(v)
-            # Si el valor es pequeño (menor a 7), asumimos que está en CM y pasamos a MM
-            if 0.5 < val < 8.0:
-                candidatos.append(val * 10)
-            else:
-                candidatos.append(val)
-        except:
-            continue
+    # 2. Extraer Valores por Etiquetas (Formato PDF/CSV)
+    # Buscamos DDVI, luego una coma, y luego el número
+    m_dv = re.search(r"DDVI,?([\d.]+)", t, re.I)
+    m_si = re.search(r"(?:DDSIV|SIV),?([\d.]+)", t, re.I)
+    m_fa = re.search(r"(?:FA|FE|EF),?([\d.]+)", t, re.I)
 
-    # --- 3. Asignación por Ventana Biológica ---
-    for c in candidatos:
-        # Rango DDVI: 35mm a 75mm
-        if 35 <= c <= 75:
-            datos["dv"] = str(round(c, 1))
-        # Rango SIV (Septum): 6mm a 18mm
-        elif 6 <= c <= 18:
-            datos["si"] = str(round(c, 1))
-        # Rango FEy: 20% a 85% (buscamos el primer valor que encaje después de los diámetros)
-        elif 20 < c < 85 and datos["fy"] == "":
-            # Solo asignamos a FEy si ya tenemos al menos un diámetro, 
-            # para no confundir un Septum de 12mm con una FEy (poco probable pero posible)
-            if c > 20: 
-                datos["fy"] = str(round(c, 1))
+    if m_dv: datos["dv"] = m_dv.group(1)
+    if m_si: datos["si"] = m_si.group(1)
+    
+    # Lógica de FEy: Si es FA (como el 38 de Alicia), calculamos FEy (~67)
+    if m_fa:
+        val_fa = float(m_fa.group(1))
+        datos["fy"] = str(round(val_fa * 1.76)) if val_fa < 50 else str(val_fa)
+
+    # 3. Respaldo Estructural (Si lo anterior falló, buscamos por rangos médicos)
+    if not datos["dv"] or not datos["si"]:
+        numeros = re.findall(r"([\d.]+)", t)
+        for n in numeros:
+            val = float(n)
+            # Si el valor está en cm (ej 4.0), lo pasamos a mm (40.0)
+            if 3.5 <= val <= 7.5: # Rango DDVI en cm
+                datos["dv"] = str(val * 10)
+            elif 0.6 <= val <= 1.6: # Rango SIV en cm
+                datos["si"] = str(val * 10)
+            elif 35 <= val <= 75: # Rango DDVI en mm
+                datos["dv"] = str(val)
+            elif 7 <= val <= 16: # Rango SIV en mm
+                datos["si"] = str(val)
 
     return datos
 
@@ -62,66 +60,43 @@ st.set_page_config(page_title="CardioReport SonoScape", layout="wide")
 st.title("🏥 Asistente Cardio SonoScape E3")
 
 if "datos" not in st.session_state:
-    st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
+    st.session_state.datos = None
 
 with st.sidebar:
-    st.header("1. Carga de Archivos")
-    arc_txt = st.file_uploader("Archivo TXT del SonoScape", type=["txt"])
-    arc_pdf = st.file_uploader("Archivo PDF (Opcional)", type=["pdf"])
-    if st.button("🔄 Reiniciar"):
-        st.session_state.datos = {"pac": "", "dv": "", "si": "", "fy": ""}
+    st.header("Carga de Estudios")
+    arc_txt = st.file_uploader("Subir TXT", type=["txt"])
+    arc_pdf = st.file_uploader("Subir PDF", type=["pdf"])
+    if st.button("🔄 Limpiar Todo"):
+        st.session_state.datos = None
         st.rerun()
 
 # Procesamiento
-if arc_txt and GROQ_KEY:
-    # Solo procesar si no hay datos cargados
-    if st.session_state.datos["pac"] == "":
-        with st.spinner("Analizando estructura de datos..."):
-            contenido = arc_txt.read().decode("latin-1", errors="ignore")
-            res = parser_sonoscape_ultra_robusto(contenido)
-            
-            # Si se subió PDF, intentar mejorar el nombre
+if (arc_txt or arc_pdf) and GROQ_KEY:
+    if st.session_state.datos is None:
+        with st.spinner("Procesando estructura de datos..."):
+            texto_acumulado = ""
+            if arc_txt:
+                texto_acumulado += arc_txt.read().decode("latin-1", errors="ignore")
             if arc_pdf:
-                try:
-                    with fitz.open(stream=arc_pdf.read(), filetype="pdf") as doc:
-                        texto_pdf = doc[0].get_text()
-                        n_m = re.search(r"(?:Paciente|Nombre)\s*[:=-]?\s*([^<\n]*)", texto_pdf, re.I)
-                        if n_m: res["pac"] = n_m.group(1).strip().upper()
-                except: pass
+                with fitz.open(stream=arc_pdf.read(), filetype="pdf") as doc:
+                    texto_acumulado += "\n".join([p.get_text() for p in doc])
             
-            st.session_state.datos = res
+            st.session_state.datos = extraccion_quirurgica(texto_acumulado)
 
-# Formulario de Validación
-if st.session_state.datos["pac"] != "":
-    with st.form("validador"):
+# Formulario
+if st.session_state.datos:
+    with st.form("editor"):
         st.subheader("🔍 Confirmación de Datos")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        pac = col1.text_input("Paciente", st.session_state.datos["pac"])
-        fey = col2.text_input("FEy %", st.session_state.datos["fy"])
-        ddvi = col3.text_input("DDVI mm", st.session_state.datos["dv"])
-        siv = col4.text_input("SIV mm", st.session_state.datos["si"])
-        
-        btn = st.form_submit_button("🚀 GENERAR INFORME")
-
-    if btn:
-        # Actualizar con ediciones manuales
-        st.session_state.datos.update({"pac": pac, "fy": fey, "dv": ddvi, "si": siv})
-        
-        client = Groq(api_key=GROQ_KEY)
-        prompt = f"""
-        Actúa como el Dr. Francisco Pastore. Genera conclusiones médicas.
-        Paciente: {pac}. Datos: DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%.
-        - Si FEy > 55%: Función sistólica conservada.
-        - Si SIV >= 11mm: Remodelado concéntrico.
-        """
-        with st.spinner("IA redactando..."):
-            completion = client.chat.completions.create(
-                model='llama-3.3-70b-versatile',
-                messages=[{'role':'user', 'content': prompt}]
-            )
+        c1, c2, c3, c4 = st.columns(4)
+        pac = c1.text_input("Paciente", st.session_state.datos["pac"])
+        fey = c2.text_input("FEy %", st.session_state.datos["fy"])
+        ddvi = c3.text_input("DDVI mm", st.session_state.datos["dv"])
+        siv = c4.text_input("SIV mm", st.session_state.datos["si"])
+        if st.form_submit_button("🚀 GENERAR INFORME"):
+            st.session_state.datos.update({"pac": pac, "fy": fey, "dv": ddvi, "si": siv})
+            client = Groq(api_key=GROQ_KEY)
+            prompt = f"Informe médico Dr. Pastore. Paciente: {pac}. DDVI {ddvi}mm, SIV {siv}mm, FEy {fey}%."
+            res = client.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':prompt}])
             st.markdown("---")
-            st.info(completion.choices[0].message.content)
+            st.info(res.choices[0].message.content)
             st.markdown("**Dr. Francisco A. Pastore**")
-else:
-    st.info("Por favor, cargue el archivo TXT exportado por el SonoScape.")
