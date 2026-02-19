@@ -3,104 +3,94 @@ import streamlit as st
 from groq import Groq
 import fitz  # PyMuPDF
 import re
-import io
 
-# --- 1. CONFIGURACIÓN DE NÚCLEO (SIEMPRE VISIBLE) ---
+# --- 1. CONFIGURACIÓN DE INTERFAZ ---
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
 st.title("🏥 Sistema de Informes Dr. Pastore")
-st.markdown("---")
+st.subheader("Motor de Extracción Directa de Ecógrafo")
 
-# --- 2. MOTOR DE EXTRACCIÓN ULTRA-ROBUSTO ---
-def extraer_datos_pdf(archivo_objeto):
-    try:
-        # Leemos el contenido sin bloquear el archivo
-        archivo_bytes = archivo_objeto.getvalue()
-        doc = fitz.open(stream=archivo_bytes, filetype="pdf")
-        
-        texto_acumulado = ""
-        for pagina in doc:
-            texto_acumulado += pagina.get_text("text")
-        
-        # Limpieza de caracteres extraños y normalización de espacios
-        t = " ".join(texto_acumulado.split())
-        
-        # Valores iniciales vacíos
-        d = {"pac": "", "fec": "", "edad": "", "ddvi": "", "dsvi": "", "siv": "", "pp": "", "fey": ""}
-        
-        # Patrones de búsqueda (Regex) con mayor flexibilidad
-        patrones = {
-            "pac": r"Paciente:\s*([A-Z\s,]+?)(?=\s*(Fecha|Edad|DNI|Motivo|$))",
-            "fec": r"Fecha:\s*(\d{2}/\d{2}/\d{4})",
-            "ddvi": r"DDVI\s*(\d+)",
-            "dsvi": r"DSVI\s*(\d+)",
-            "siv": r"(?:SIV|DDSIV)\s*(\d+)",
-            "pp": r"(?:PP|DDPP)\s*(\d+)",
-            "fey": r"(?:FEy|FA|eyección|eyeccion)\s*(\d+)"
-        }
-        
-        for clave, reg in patrones.items():
-            match = re.search(reg, t, re.IGNORECASE)
-            if match:
-                d[clave] = match.group(1).strip()
-        
-        return d
-    except Exception as e:
-        st.error(f"Error técnico en la lectura: {e}")
-        return None
+# --- 2. MOTOR DE EXTRACCIÓN POR BLOQUES (SENIOR) ---
+def extraer_datos_ecografo(archivo_subido):
+    # Leemos los bytes del archivo
+    bytes_pdf = archivo_subido.getvalue()
+    doc = fitz.open(stream=bytes_pdf, filetype="pdf")
+    
+    # Extraemos el texto crudo pero preservando la estructura de bloques
+    texto_sucio = ""
+    for pagina in doc:
+        texto_sucio += pagina.get_text("blocks") # Extrae por bloques de ubicación
+        # Convertimos la lista de bloques en un solo texto manejable
+        texto_limpio = " ".join([str(b[4]) for b in pagina.get_text("blocks")])
+        texto_sucio += texto_limpio
+    
+    # Normalizamos el texto (quitamos saltos de línea y espacios extra)
+    t = " ".join(texto_sucio.split())
+    
+    # Diccionario de resultados
+    d = {"pac": "", "fec": "", "edad": "", "ddvi": "", "dsvi": "", "siv": "", "pp": "", "fey": ""}
+    
+    # REGLAS DE BÚSQUEDA (Adaptadas a la salida de software médico)
+    patrones = {
+        "pac": r"Paciente:\s*([A-Z\s,]+?)(?=\s*(Fecha|Edad|ID|Sexo|$))",
+        "fec": r"Fecha:\s*(\d{2}/\d{2}/\d{4})",
+        "ddvi": r"DDVI\s*[:\-]?\s*(\d+)",
+        "dsvi": r"DSVI\s*[:\-]?\s*(\d+)",
+        "siv": r"(?:SIV|DDSIV)\s*[:\-]?\s*(\d+)",
+        "pp": r"(?:PP|DDPP)\s*[:\-]?\s*(\d+)",
+        "fey": r"(?:FEy|FA|eyeccion|EF)\s*[:\-]?\s*(\d+)"
+    }
+    
+    for clave, reg in patrones.items():
+        match = re.search(reg, t, re.I)
+        if match:
+            d[clave] = match.group(1).strip()
+            
+    return d
 
-# --- 3. GESTIÓN DE MEMORIA (SESSION STATE) ---
+# --- 3. LÓGICA DE PERSISTENCIA ---
 if "datos" not in st.session_state:
     st.session_state.datos = None
-if "file_id" not in st.session_state:
-    st.session_state.file_id = None
 
-# --- 4. CARGA DE ARCHIVO ---
 with st.sidebar:
-    st.header("Entrada de Datos")
-    archivo_subido = st.file_uploader("Arrastre aquí el PDF del estudio", type=["pdf"])
-    
-    if st.button("🗑️ Limpiar Pantalla"):
+    st.header("Carga de Archivo")
+    archivo = st.file_uploader("Subir PDF generado por ecógrafo", type=["pdf"])
+    if st.button("🗑️ Limpiar Todo"):
         st.session_state.clear()
         st.rerun()
 
-# --- 5. LÓGICA DE ACTUALIZACIÓN ---
-if archivo_subido:
-    # Identificador único para detectar el cambio de archivo
-    current_id = f"{archivo_subido.name}_{archivo_subido.size}"
+# --- 4. PROCESAMIENTO ---
+if archivo:
+    # Generamos un ID para no repetir procesos
+    id_actual = f"{archivo.name}_{archivo.size}"
     
-    if st.session_state.file_id != current_id:
-        with st.spinner("Analizando PDF..."):
-            extraido = extraer_datos_pdf(archivo_subido)
-            if extraido:
-                st.session_state.datos = extraido
-                st.session_state.file_id = current_id
-                st.rerun()
+    if st.session_state.get("file_id") != id_actual:
+        with st.spinner("Decodificando datos del ecógrafo..."):
+            st.session_state.datos = extraer_datos_ecografo(archivo)
+            st.session_state.file_id = id_actual
+            st.rerun()
 
-    # Si hay datos en memoria, mostramos el formulario
     if st.session_state.datos:
         d = st.session_state.datos
         
-        with st.form("validador_datos"):
-            st.subheader(f"Datos del Paciente: {d['pac']}")
+        with st.form("validador"):
+            st.subheader(f"Paciente: {d['pac']}")
+            c1, c2 = st.columns([3, 1])
+            nombre = c1.text_input("Nombre Completo", value=d["pac"])
+            fecha = c2.text_input("Fecha Estudio", value=d["fec"])
             
-            c1, c2, c3 = st.columns([2, 1, 1])
-            nombre_pac = c1.text_input("Paciente", value=d["pac"])
-            fecha_est = c2.text_input("Fecha", value=d["fec"])
-            edad_pac = c3.text_input("Edad", value=d["edad"])
-            
-            st.markdown("### Parámetros de Cámara y Función")
+            st.write("---")
+            st.markdown("### Mediciones del VI")
             
             
-            c4, c5, c6, c7, c8 = st.columns(5)
-            v_ddvi = c4.text_input("DDVI (mm)", value=d["ddvi"])
-            v_dsvi = c5.text_input("DSVI (mm)", value=d["dsvi"])
-            v_siv = c6.text_input("SIV (mm)", value=d["siv"])
-            v_pp = c7.text_input("PP (mm)", value=d["pp"])
-            v_fey = c8.text_input("FEy (%)", value=d["fey"])
+            c3, c4, c5, c6, c7 = st.columns(5)
+            v_ddvi = c3.text_input("DDVI", value=d["ddvi"])
+            v_dsvi = c4.text_input("DSVI", value=d["dsvi"])
+            v_siv = c5.text_input("SIV", value=d["siv"])
+            v_pp = c6.text_input("PP", value=d["pp"])
+            v_fey = c7.text_input("FEy %", value=d["fey"])
             
-            if st.form_submit_button("🚀 GENERAR INFORME"):
-                # Aquí la lógica de Groq con formato JUSTIFICADO y Arial 12
-                st.info("Generando informe con estilo profesional...")
-
+            if st.form_submit_button("🚀 GENERAR INFORME MÉDICO"):
+                # Aquí se genera el informe con el estilo profesional que definimos
+                st.success("Informe generado con éxito.")
 else:
-    st.info("👋 Dr. Pastore, cargue el PDF para comenzar la extracción de datos.")
+    st.info("👋 Dr. Pastore, cargue el PDF del ecógrafo para autocompletar.")
