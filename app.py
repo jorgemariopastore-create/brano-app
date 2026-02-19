@@ -7,61 +7,74 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import io
 import re
 
-# --- 1. MOTOR DE EXTRACCIÓN (AJUSTADO AL PDF REAL) ---
-def extraer_datos_doctor(archivo_pdf):
+# --- 1. MOTOR DE EXTRACCIÓN MEJORADO (BUSCA ENTRE COMILLAS Y TABLAS) ---
+def extraer_datos_precisos(archivo_pdf):
     archivo_pdf.seek(0)
     pdf_bytes = archivo_pdf.read()
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    texto = " ".join([p.get_text() for p in doc])
-    t = " ".join(texto.split())
     
-    def buscar(patron, cadena):
+    texto_sucio = ""
+    for pagina in doc:
+        texto_sucio += pagina.get_text()
+    
+    # Normalizamos el texto quitando saltos de línea extraños
+    t = " ".join(texto_sucio.split())
+    
+    def buscar_dato(etiqueta, cadena):
+        # Esta expresión regular busca el dato incluso si tiene comillas o está en tablas
+        patron = rf'{etiqueta}\s*\"?,\s*\"?(\d+\.?\d*)'
         m = re.search(patron, cadena, re.I)
         return m.group(1).strip() if m else ""
 
-    # Extracción de biometría y cavidades según su PDF
+    # Extracción de Encabezado
+    nombre_pac = re.search(r"Paciente:\s*([A-Z\s]+)", t, re.I)
+    fecha_est = re.search(r"Fecha de estudio:\s*(\d{{2}}/\d{{2}}/\d{{4}})", t, re.I)
+    peso_val = re.search(r"Peso \(kg\):\s*(\d+\.?\d*)", t, re.I)
+    alt_val = re.search(r"Altura \(cm\):\s*(\d+\.?\d*)", t, re.I)
+
     datos = {
-        "pac": buscar(r"Paciente:\s*([A-Z\s,]+)", t),
-        "fec": buscar(r"Fecha de estudio:\s*(\d{2}/\d{2}/\d{4})", t),
-        "peso": buscar(r"Peso \(kg\):\s*(\d+\.?\d*)", t),
-        "alt": buscar(r"Altura \(cm\):\s*(\d+\.?\d*)", t),
-        "bsa": buscar(r"BSA\(m\^2\):\s*(\d+\.?\d*)", t),
-        "ddvi": buscar(r"DDVI\s*\",\s*\"(\d+)", t),
-        "dsvi": buscar(r"DSVI\s*\",\s*\"(\d+)", t),
-        "siv": buscar(r"DDSIV\s*\",\s*\"(\d+)", t),
-        "pp": buscar(r"DDPP\s*\",\s*\"(\d+)", t),
-        "fa": buscar(r"FA\s*\",\s*\"(\d+)", t)
+        "pac": nombre_pac.group(1).strip() if nombre_pac else "Paciente no detectado",
+        "fec": fecha_est.group(1).strip() if fecha_est else "19/02/2026",
+        "peso": peso_val.group(1).strip() if peso_val else "",
+        "alt": alt_val.group(1).strip() if alt_val else "",
+        "ddvi": buscar_dato("DDVI", t),
+        "dsvi": buscar_dato("DSVI", t),
+        "siv": buscar_dato("DDSIV", t),
+        "pp": buscar_dato("DDPP", t),
+        "fa": buscar_dato("FA", t)
     }
 
     fotos = []
     for i in range(len(doc)):
         for img in doc.get_page_images(i):
             pix = doc.extract_image(img[0])
-            if pix["size"] > 15000: fotos.append(io.BytesIO(pix["image"]))
+            if pix["size"] > 15000:
+                fotos.append(io.BytesIO(pix["image"]))
     doc.close()
     return datos, fotos
 
-# --- 2. INTERFAZ ---
+# --- 2. INTERFAZ Y PROCESAMIENTO ---
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("🏥 Sistema de Informes Médicos - Dr. Pastore")
+st.title("🏥 Sistema de Informes Dr. Pastore")
 
-archivo = st.file_uploader("Cargar PDF del Ecógrafo", type=["pdf"])
+archivo = st.file_uploader("Subir PDF del Ecógrafo", type=["pdf"])
 
 if archivo:
-    datos, fotos = extraer_datos_doctor(archivo)
-    
-    with st.form("panel_edicion"):
-        st.subheader(f"Informe: {datos['pac']}")
+    with st.spinner("Analizando PDF y extrayendo datos técnicos..."):
+        datos, fotos = extraer_datos_precisos(archivo)
+
+    # PANEL DE CONTROL PARA EL DOCTOR
+    with st.form("validador_informe"):
+        st.subheader(f"Datos del Paciente: {datos['pac']}")
         
-        # Fila 1: Biometría
         c1, c2, c3, c4 = st.columns(4)
-        pac = c1.text_input("Paciente", value=datos['pac'])
-        fec = c2.text_input("Fecha", value=datos['fec'])
-        peso = c3.text_input("Peso (kg)", value=datos['peso'])
-        alt = c4.text_input("Altura (cm)", value=datos['alt'])
+        pac_final = c1.text_input("Nombre", value=datos['pac'])
+        fec_final = c2.text_input("Fecha", value=datos['fec'])
+        peso_final = c3.text_input("Peso (kg)", value=datos['peso'])
+        alt_final = c4.text_input("Altura (cm)", value=datos['alt'])
         
-        # Fila 2: Cavidades
-        st.markdown("**Parámetros Ecocardiográficos**")
+        st.write("---")
+        st.markdown("**Cavidades y Función Sistólica**")
         d1, d2, d3, d4, d5 = st.columns(5)
         v_ddvi = d1.text_input("DDVI", value=datos['ddvi'])
         v_dsvi = d2.text_input("DSVI", value=datos['dsvi'])
@@ -69,45 +82,61 @@ if archivo:
         v_pp = d4.text_input("PP", value=datos['pp'])
         v_fa = d5.text_input("FA %", value=datos['fa'])
         
-        st.info("Al generar el Word, el sistema dejará el espacio listo para su diagnóstico.")
-        
-        if st.form_submit_button("🚀 GENERAR INFORME PROFESIONAL"):
-            # CREACIÓN DEL WORD CON ESTILO SENIOR
-            doc = Document()
-            
-            # Encabezado con formato
-            title = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
-            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            p_head = doc.add_paragraph()
-            p_head.add_run(f"PACIENTE: {pac}").bold = True
-            p_head.add_run(f"\nFECHA: {fec} | PESO: {peso} kg | ALTURA: {alt} cm")
-            
-            doc.add_heading('VALORES OBTENIDOS', 1)
-            p_vals = doc.add_paragraph()
-            p_vals.add_run(f"DDVI: {v_ddvi} mm | DSVI: {v_dsvi} mm | SIV: {v_siv} mm | PP: {v_pp} mm | FA: {v_fa} %")
-            
-            # ESPACIO PARA EL DOCTOR (SIN SUGERENCIAS)
-            doc.add_heading('HALLAZGOS Y CONCLUSIONES', 1)
-            p_conc = doc.add_paragraph("\n\n(Escriba aquí su conclusión médica...)\n\n")
-            p_conc.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            
-            # GRILLA DE IMÁGENES 2xN
-            if fotos:
-                doc.add_page_break()
-                doc.add_heading('ANEXO DE IMÁGENES', 1)
-                tabla = doc.add_table(rows=(len(fotos)+1)//2, cols=2)
-                for i, f in enumerate(fotos):
-                    run = tabla.rows[i//2].cells[i%2].paragraphs[0].add_run()
-                    run.add_picture(f, width=Inches(3.0))
-            
-            buf = io.BytesIO()
-            doc.save(buf)
-            st.session_state.ready_file = buf.getvalue()
-            st.session_state.ready_name = pac
+        generar = st.form_submit_button("🚀 GENERAR INFORME COMPLETO EN WORD")
 
-# Botón de descarga independiente
-if "ready_file" in st.session_state:
-    st.download_button(f"⬇️ DESCARGAR INFORME {st.session_state.ready_name}", 
-                      st.session_state.ready_file, 
-                      f"Informe_{st.session_state.ready_name}.docx")
+    # --- 3. GENERACIÓN DEL WORD FINAL (SÓLO SI SE PULSA EL BOTÓN) ---
+    if generar:
+        doc = Document()
+        
+        # Formato de Título Profesional
+        header = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
+        header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Datos Generales
+        p1 = doc.add_paragraph()
+        p1.add_run(f"PACIENTE: {pac_final}").bold = True
+        p1.add_run(f"\nFECHA: {fec_final} | PESO: {peso_final} kg | ALTURA: {alt_final} cm")
+        
+        
+
+        # Tabla de Valores
+        doc.add_heading('PARÁMETROS OBTENIDOS', 1)
+        tabla_vals = doc.add_table(rows=2, cols=5)
+        tabla_vals.style = 'Table Grid'
+        
+        etiquetas = ["DDVI (mm)", "DSVI (mm)", "SIV (mm)", "PP (mm)", "FA (%)"]
+        valores = [v_ddvi, v_dsvi, v_siv, v_pp, v_fa]
+        
+        for i in range(5):
+            tabla_vals.cell(0, i).text = etiquetas[i]
+            tabla_vals.cell(1, i).text = valores[i]
+
+        # Espacio para la conclusión del Dr.
+        doc.add_heading('HALLAZGOS Y CONCLUSIÓN', 1)
+        doc.add_paragraph("\n\n(Redacte aquí su conclusión médica final...)\n\n")
+
+        # Anexo de Imágenes en 2 columnas
+        if fotos:
+            doc.add_page_break()
+            doc.add_heading('ANEXO DE IMÁGENES', 1)
+            tabla_img = doc.add_table(rows=(len(fotos)+1)//2, cols=2)
+            for i, f in enumerate(fotos):
+                run = tabla_img.rows[i//2].cells[i%2].paragraphs[0].add_run()
+                run.add_picture(f, width=Inches(3.0))
+
+        # Preparar descarga
+        buf = io.BytesIO()
+        doc.save(buf)
+        st.session_state.file_final = buf.getvalue()
+        st.session_state.name_final = pac_final
+
+# --- 4. BOTÓN DE DESCARGA (VISIBLE SÓLO CUANDO EL WORD SE GENERÓ) ---
+if "file_final" in st.session_state:
+    st.markdown("---")
+    st.success(f"Informe de {st.session_state.name_final} preparado correctamente.")
+    st.download_button(
+        label="⬇️ DESCARGAR DOCUMENTO WORD",
+        data=st.session_state.file_final,
+        file_name=f"Informe_{st.session_state.name_final}.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
