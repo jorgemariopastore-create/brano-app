@@ -9,90 +9,72 @@ import re
 import PyPDF2
 from datetime import datetime
 
-# --- 1. EXTRACCIÓN DE PDF (SOLO SI EL TEXTO ES LEGIBLE) ---
-def extraer_datos_pdf(file):
-    texto_completo = ""
+# --- FUNCIONES DE APOYO ---
+def extraer_datos_seguros(file):
+    """Extrae solo lo básico si es legible, sino devuelve vacío."""
     datos = {}
-    if file is not None:
+    if file:
         try:
             reader = PyPDF2.PdfReader(file)
+            texto = ""
             for page in reader.pages:
-                texto_completo += page.extract_text()
+                texto += page.extract_text()
             
-            # Buscamos datos clave (mejorado para detectar mayúsculas/minúsculas)
-            patrones = {
-                "pac": r"Paciente[:\s]+(.*)",
-                "peso": r"Peso[:\s]+(\d+)",
-                "altura": r"Altura[:\s]+(\d+)",
-                "ddvi": r"DDVI[:\s]+(\d+)",
-                "siv": r"SIV[:\s]+(\d+)",
-                "pp": r"PP[:\s]+(\d+)",
-                "fa": r"FA[:\s]+(\d+)",
-                "ai": r"AI[:\s]+(\d+)"
-            }
-            for clave, patron in patrones.items():
-                match = re.search(patron, texto_completo, re.IGNORECASE)
-                if match:
-                    datos[clave] = match.group(1).strip()
+            # Buscamos solo lo que suele ser estándar en los PDF de equipos
+            pac_match = re.search(r"Paciente[:\s]+(.*)", texto, re.IGNORECASE)
+            if pac_match: datos["pac"] = pac_match.group(1).strip()
+            
+            peso_match = re.search(r"Peso[:\s]+(\d+)", texto, re.IGNORECASE)
+            if peso_match: datos["peso"] = peso_match.group(1).strip()
         except:
             pass
     return datos
 
-# --- 2. CÁLCULO SC ---
-def calcular_sc_dubois(peso, altura):
-    try:
-        p = float(peso)
-        a = float(altura)
-        if p > 0 and a > 0:
-            return 0.007184 * (p**0.425) * (a**0.725)
-    except:
-        pass
-    return 0
-
-# --- 3. GENERADOR DE WORD (ESTRUCTURA TÉCNICA CAPITULADA) ---
 def generar_word(datos):
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(11)
 
-    # Bloque Paciente
-    p_id = doc.add_paragraph()
-    p_id.add_run(f"PACIENTE: {datos['pac']}\n").bold = True
-    p_id.add_run(f"FECHA: {datos['fecha']}\n")
-    p_id.add_run(f"PESO: {datos['peso']} kg | ALTURA: {datos['altura']} cm | SC: {datos['sc']:.2f} m²")
+    # Identificación del Paciente
+    p = doc.add_paragraph()
+    p.add_run(f"PACIENTE: {datos['pac']}\n").bold = True
+    p.add_run(f"FECHA: {datos['fec']}\n")
+    p.add_run(f"PESO: {datos['peso']} kg | ALTURA: {datos['alt']} cm")
     doc.add_paragraph("_" * 75)
 
-    # CAPÍTULO I: ECOCARDIOGRAMA
+    # CAPÍTULO I: ECOCARDIOGRAMA (Solo para el Word)
     doc.add_paragraph("\nCAPÍTULO I: ECOCARDIOGRAMA ESTRUCTURAL").bold = True
-    t1 = doc.add_table(rows=3, cols=4)
+    t1 = doc.add_table(rows=2, cols=5)
     t1.style = 'Table Grid'
-    mediciones = [
-        ("DDVD", datos['ddvd']), ("DDVI", datos['ddvi']), ("DSVI", datos['dsvi']), ("FA/FEy", datos['fey']),
-        ("ES", datos['es']), ("SIV", datos['siv']), ("PP", datos['pp']), ("DRAO", datos['drao']),
-        ("AI", datos['ai']), ("AAO", datos['aao']), ("", ""), ("", "")
-    ]
-    idx = 0
-    for r in range(3):
-        for c in range(4):
-            if idx < len(mediciones):
-                t1.cell(r, c).text = f"{mediciones[idx][0]}: {mediciones[idx][1]} mm" if mediciones[idx][0] else ""
-                idx += 1
+    # Fila 1
+    t1.cell(0,0).text = f"DDVD: {datos['ddvd']}"
+    t1.cell(0,1).text = f"DDVI: {datos['ddvi']}"
+    t1.cell(0,2).text = f"DSVI: {datos['dsvi']}"
+    t1.cell(0,3).text = f"FA: {datos['fa']}%"
+    t1.cell(0,4).text = f"ES: {datos['es']}"
+    # Fila 2
+    t1.cell(1,0).text = f"SIV: {datos['siv']}"
+    t1.cell(1,1).text = f"PP: {datos['pp']}"
+    t1.cell(1,2).text = f"DRAO: {datos['drao']}"
+    t1.cell(1,3).text = f"AI: {datos['ai']}"
+    t1.cell(1,4).text = f"AAO: {datos['aao']}"
 
-    # CAPÍTULO II: DOPPLER
+    # CAPÍTULO II: DOPPLER (Solo para el Word)
     doc.add_paragraph("\nCAPÍTULO II: ECO-DOPPLER HEMODINÁMICO").bold = True
     t2 = doc.add_table(rows=5, cols=4)
     t2.style = 'Table Grid'
-    hd = ["Válvula", "Vel. cm/s", "Grad. P/M", "Insuf."]
-    for i, h in enumerate(hd): t2.cell(0,i).text = h
+    encabezados = ["Válvula", "Velocidad (cm/s)", "Gradiente", "Insuf."]
+    for i, nombre in enumerate(encabezados):
+        t2.cell(0,i).text = nombre
     
-    valvs = [
+    valvulas = [
         ("Tricúspide", datos['v_tri'], datos['g_tri'], datos['i_tri']),
         ("Pulmonar", datos['v_pul'], datos['g_pul'], datos['i_pul']),
         ("Mitral", datos['v_mit'], datos['g_mit'], datos['i_mit']),
         ("Aórtica", datos['v_ao'], datos['g_ao'], datos['i_ao'])
     ]
-    for i, (n, v, g, ins) in enumerate(valvs, start=1):
+    for i, (n, v, g, ins) in enumerate(valvulas, start=1):
         t2.cell(i,0).text = n
         t2.cell(i,1).text = v
         t2.cell(i,2).text = g
@@ -113,86 +95,104 @@ def generar_word(datos):
     output.seek(0)
     return output
 
-# --- 4. INTERFAZ DE CARGA (STREAMLIT) ---
+# --- INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("🫀 Validación Médica")
+st.title("🫀 Sistema de Validación de Informes")
 
-archivo_pdf = st.file_uploader("Suba el PDF del estudio", type=["pdf"])
-datos_ex = extraer_datos_pdf(archivo_pdf)
+# 1. Carga de archivo
+pdf_subido = st.file_uploader("Subir PDF del Equipo", type=["pdf"])
+datos_auto = extraer_datos_seguros(pdf_subido)
 
-# FORMULARIO ÚNICO
-with st.form("main_form"):
+# 2. Formulario de Validación (Siguiendo el orden de tus archivos)
+with st.form("formulario_principal"):
     st.subheader("📋 Datos del Paciente")
     c1, c2, c3, c4 = st.columns(4)
-    pac = c1.text_input("Paciente", value=datos_ex.get("pac", ""))
+    pac = c1.text_input("Paciente", value=datos_auto.get("pac", ""))
     fec = c2.date_input("Fecha", datetime.now())
-    pes = c3.text_input("Peso (Kg)", value=datos_ex.get("peso", ""))
-    alt = c4.text_input("Altura (cm)", value=datos_ex.get("altura", ""))
+    peso = c3.text_input("Peso (Kg)", value=datos_auto.get("peso", ""))
+    alt = c4.text_input("Altura (cm)", value="")
 
-    st.divider()
+    st.markdown("---")
     
-    # SECCIÓN ECOCARDIOGRAMA (ORDEN DE TU PLANILLA)
-    st.subheader("📏 Ecocardiograma")
+    # SECCIÓN ECOCARDIOGRAMA (ORDEN EXACTO DE TU EXCEL)
+    st.subheader("📏 Ecocardiograma (Carga Estructural)")
     e1, e2, e3, e4, e5 = st.columns(5)
-    ddvd = e1.text_input("DDVD", value="")
-    ddvi = e2.text_input("DDVI", value=datos_ex.get("ddvi", ""))
-    dsvi = e3.text_input("DSVI", value="")
-    fa = e4.text_input("FA (%)", value=datos_ex.get("fa", ""))
-    es = e5.text_input("ES (mm)", value="")
-    
+    f1_ddvd = e1.text_input("DDVD", help="Referencia 22-43 mm")
+    f1_ddvi = e2.text_input("DDVI")
+    f1_dsvi = e3.text_input("DSVI")
+    f1_fa = e4.text_input("FA (%)")
+    f1_es = e5.text_input("ES (mm)")
+
     e1b, e2b, e3b, e4b, e5b = st.columns(5)
-    siv = e1b.text_input("SIV", value=datos_ex.get("siv", ""))
-    pp = e2b.text_input("PP", value=datos_ex.get("pp", ""))
-    drao = e3b.text_input("DRAO", value="")
-    ai = e4b.text_input("AI", value=datos_ex.get("ai", ""))
-    aao = e5b.text_input("AAO", value="")
+    f2_siv = e1b.text_input("SIV")
+    f2_pp = e2b.text_input("PP")
+    f2_drao = e3b.text_input("DRAO")
+    f2_ai = e4b.text_input("AI")
+    f2_aao = e5b.text_input("AAO")
 
-    st.divider()
+    st.markdown("---")
 
-    # SECCIÓN DOPPLER (ORDEN DE TU TABLA)
-    st.subheader("🔊 Eco-Doppler")
+    # SECCIÓN DOPPLER (ORDEN EXACTO DE TU TABLA WORD)
+    st.subheader("🔊 Eco-Doppler (Carga Hemodinámica)")
     
-    # Encabezados visuales
-    h1, h2, h3, h4 = st.columns([2, 2, 2, 2])
-    h1.markdown("**Válvula**")
-    h2.markdown("**Velocidad cm/seg**")
-    h3.markdown("**Gradiente (P/M)**")
-    h4.markdown("**Insuficiencia**")
+    # Encabezados de tabla para la web
+    col_v, col_vel, col_grad, col_ins = st.columns([2, 2, 2, 2])
+    col_v.write("**Válvula**")
+    col_vel.write("**Velocidad cm/seg**")
+    col_grad.write("**Gradiente**")
+    col_ins.write("**Insuficiencia**")
 
-    # Filas Tricúspide -> Pulmonar -> Mitral -> Aórtica
-    v_tri = h2.text_input("Tri_V", label_visibility="collapsed")
-    g_tri = h3.text_input("Tri_G", label_visibility="collapsed")
-    i_tri = h4.selectbox("Tri_I", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
-    
-    v_pul = h2.text_input("Pul_V", label_visibility="collapsed")
-    g_pul = h3.text_input("Pul_G", label_visibility="collapsed")
-    i_pul = h4.selectbox("Pul_I", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
-    
-    v_mit = h2.text_input("Mit_V", label_visibility="collapsed")
-    g_mit = h3.text_input("Mit_G", label_visibility="collapsed")
-    i_mit = h4.selectbox("Mit_I", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
-    
-    v_ao = h2.text_input("Ao_V", label_visibility="collapsed")
-    g_ao = h3.text_input("Ao_G", label_visibility="collapsed")
-    i_ao = h4.selectbox("Ao_I", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
+    # Filas de válvulas
+    # Tricúspide
+    col_v.write("Tricúspide")
+    v_tri = col_vel.text_input("Vel_Tri", label_visibility="collapsed")
+    g_tri = col_grad.text_input("Grad_Tri", label_visibility="collapsed")
+    i_tri = col_ins.selectbox("Ins_Tri", ["No", "Sí (Leve)", "Sí (Mod)", "Sí (Sev)"], label_visibility="collapsed")
 
-    st.divider()
-    conclu = st.text_area("Conclusión", "Hallazgos dentro de límites normales.")
-    
-    # EL BOTÓN DE SUBMIT QUE FALTABA
-    submitted = st.form_submit_button("🚀 GENERAR INFORME PROFESIONAL")
+    # Pulmonar
+    col_v.write("Pulmonar")
+    v_pul = col_vel.text_input("Vel_Pul", label_visibility="collapsed")
+    g_pul = col_grad.text_input("Grad_Pul", label_visibility="collapsed")
+    i_pul = col_ins.selectbox("Ins_Pul", ["No", "Sí (Leve)", "Sí (Mod)", "Sí (Sev)"], label_visibility="collapsed")
 
-# Lógica fuera del formulario para la descarga
-if submitted:
-    sc_val = calcular_sc_dubois(pes, alt)
-    dfinal = {
-        "pac": pac, "fecha": fec.strftime("%d/%m/%Y"), "peso": pes, "altura": alt, "sc": sc_val,
-        "ddvd": ddvd, "ddvi": ddvi, "dsvi": dsvi, "fey": fa, "es": es, "siv": siv, "pp": pp, "drao": drao, "ai": ai, "aao": aao,
-        "v_tri": v_tri, "g_tri": g_tri, "i_tri": i_tri,
-        "v_pul": v_pul, "g_pul": g_pul, "i_pul": i_pul,
-        "v_mit": v_mit, "g_mit": g_mit, "i_mit": i_mit,
-        "v_ao": v_ao, "g_ao": g_ao, "i_ao": i_ao,
-        "conclusion": conclu
-    }
-    archivo = generar_word(dfinal)
-    st.download_button("📥 Descargar Informe en Word", data=archivo, file_name=f"Informe_{pac}.docx")
+    # Mitral
+    col_v.write("Mitral")
+    v_mit = col_vel.text_input("Vel_Mit", label_visibility="collapsed")
+    g_mit = col_grad.text_input("Grad_Mit", label_visibility="collapsed")
+    i_mit = col_ins.selectbox("Ins_Mit", ["No", "Sí (Leve)", "Sí (Mod)", "Sí (Sev)"], label_visibility="collapsed")
+
+    # Aórtica
+    col_v.write("Aórtica")
+    v_ao = col_vel.text_input("Vel_Ao", label_visibility="collapsed")
+    g_ao = col_grad.text_input("Grad_Ao", label_visibility="collapsed")
+    i_ao = col_ins.selectbox("Ins_Ao", ["No", "Sí (Leve)", "Sí (Mod)", "Sí (Sev)"], label_visibility="collapsed")
+
+    st.markdown("---")
+    conclusion = st.text_area("Conclusión Final", value="Ecocardiograma Doppler dentro de parámetros normales.")
+
+    # EL BOTÓN QUE SIEMPRE DEBE APARECER
+    enviado = st.form_submit_button("🚀 GENERAR INFORME EN WORD")
+
+# 3. Lógica después de presionar el botón
+if enviado:
+    if not pac:
+        st.error("Por favor, ingrese el nombre del paciente.")
+    else:
+        dict_datos = {
+            "pac": pac, "fec": fec.strftime("%d/%m/%Y"), "peso": peso, "alt": alt,
+            "ddvd": f1_ddvd, "ddvi": f1_ddvi, "dsvi": f1_dsvi, "fa": f1_fa, "es": f1_es,
+            "siv": f2_siv, "pp": f2_pp, "drao": f2_drao, "ai": f2_ai, "aao": f2_aao,
+            "v_tri": v_tri, "g_tri": g_tri, "i_tri": i_tri,
+            "v_pul": v_pul, "g_pul": g_pul, "i_pul": i_pul,
+            "v_mit": v_mit, "g_mit": g_mit, "i_mit": i_mit,
+            "v_ao": v_ao, "g_ao": g_ao, "i_ao": i_ao,
+            "conclusion": conclusion
+        }
+        word_final = generar_word(dict_datos)
+        st.success("Informe generado. Descárguelo aquí abajo:")
+        st.download_button(
+            label="📥 Descargar Word",
+            data=word_final,
+            file_name=f"Informe_{pac}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
