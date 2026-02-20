@@ -9,7 +9,7 @@ import re
 import PyPDF2
 from datetime import datetime
 
-# --- 1. EXTRACCIÓN DE DATOS SEGUROS ---
+# --- 1. EXTRACCIÓN DE DATOS ---
 def extraer_datos_pdf(file):
     datos = {"pac": "", "peso": "", "fecha": datetime.now()}
     if file:
@@ -18,54 +18,61 @@ def extraer_datos_pdf(file):
             texto = ""
             for page in reader.pages: texto += page.extract_text()
             
-            # Nombre del Paciente
-            m_pac = re.search(r"Paciente[:\s]+(.*)", texto, re.IGNORECASE)
-            if m_pac: datos["pac"] = m_pac.group(1).strip()
+            # Buscamos nombre: evita capturar números de protocolo
+            lineas = texto.split('\n')
+            for linea in lineas:
+                if "Paciente" in linea or "Nombre" in linea:
+                    nombre = linea.split(':')[-1].strip()
+                    # Si el resultado es solo números, seguimos buscando
+                    if not nombre.isdigit():
+                        datos["pac"] = nombre
+                        break
             
-            # Peso
-            m_pes = re.search(r"Peso[:\s]+(\d+)", texto, re.IGNORECASE)
-            if m_pes: datos["peso"] = m_pes.group(1).strip()
-
-            # Fecha (Busca formato DD/MM/YYYY o YYYY-MM-DD)
+            # Fecha específica del informe
             m_fec = re.search(r"(\d{2}/\d{2}/\d{4})", texto)
             if m_fec:
                 datos["fecha"] = datetime.strptime(m_fec.group(1), "%d/%m/%Y")
         except: pass
     return datos
 
-# --- 2. GENERADOR DE WORD (ESTRUCTURA EXACTA) ---
+# --- 2. GENERADOR DE WORD ---
 def generar_word(d):
     doc = Document()
+    
+    # Configuración de fuente Arial para todo el doc
     style = doc.styles['Normal']
-    style.font.name = 'Arial'
-    style.font.size = Pt(10)
+    font = style.font
+    font.name = 'Arial'
+    font.size = Pt(10)
 
-    # Encabezado Paciente
+    # ENCABEZADO
+    header = doc.add_paragraph()
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_h = header.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
+    run_h.bold = True
+    run_h.size = Pt(14)
+
+    # DATOS FILIATORIOS
     p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {d['pac']}\n").bold = True
-    p.add_run(f"FECHA: {d['fecha']}\n")
-    p.add_run(f"PESO: {d['peso']} kg | ALTURA: {d['alt']} cm")
-    doc.add_paragraph("_" * 80)
+    p.add_run(f"\nPACIENTE: {d['pac']}\n").bold = True
+    p.add_run(f"FECHA DE ESTUDIO: {d['fecha']}\n")
+    p.add_run(f"PESO: {d['peso']} kg | ALTURA: {d['alt']} cm | SC: {d['sc']} m²\n")
+    doc.add_paragraph("_" * 85)
 
-    # CAPÍTULO I: ECOCARDIOGRAMA
-    doc.add_paragraph("CAPÍTULO I: ECOCARDIOGRAMA ESTRUCTURAL").bold = True
+    # CAPÍTULO I: ESTRUCTURA
+    doc.add_paragraph("CAPÍTULO I: ANÁLISIS MORFOLÓGICO Y ESTRUCTURAL").bold = True
+    doc.add_paragraph("Se realiza estudio ecocardiográfico observando las siguientes dimensiones:")
+    
     t1 = doc.add_table(rows=2, cols=5)
     t1.style = 'Table Grid'
-    # Fila 1
-    t1.cell(0,0).text = f"DDVD: {d['ddvd']}"
-    t1.cell(0,1).text = f"DDVI: {d['ddvi']}"
-    t1.cell(0,2).text = f"DSVI: {d['dsvi']}"
-    t1.cell(0,3).text = f"FA: {d['fa']}%"
-    t1.cell(0,4).text = f"ES: {d['es']}"
-    # Fila 2
-    t1.cell(1,0).text = f"SIV: {d['siv']}"
-    t1.cell(1,1).text = f"PP: {d['pp']}"
-    t1.cell(1,2).text = f"DRAO: {d['drao']}"
-    t1.cell(1,3).text = f"AI: {d['ai']}"
-    t1.cell(1,4).text = f"AAO: {d['aao']}"
+    vals1 = [("DDVD", d['ddvd']), ("DDVI", d['ddvi']), ("DSVI", d['dsvi']), ("FA/FEy", d['fa']+"%"), ("ES", d['es'])]
+    vals2 = [("SIV", d['siv']), ("PP", d['pp']), ("DRAO", d['drao']), ("AI", d['ai']), ("AAO", d['aao'])]
+    
+    for i, (lab, val) in enumerate(vals1): t1.cell(0,i).text = f"{lab}: {val}"
+    for i, (lab, val) in enumerate(vals2): t1.cell(1,i).text = f"{lab}: {val}"
 
     # CAPÍTULO II: DOPPLER
-    doc.add_paragraph("\nCAPÍTULO II: ECO-DOPPLER HEMODINÁMICO").bold = True
+    doc.add_paragraph("\nCAPÍTULO II: EVALUACIÓN HEMODINÁMICA (DOPPLER)").bold = True
     t2 = doc.add_table(rows=5, cols=5)
     t2.style = 'Table Grid'
     h = ["Válvula", "Velocidad (cm/s)", "Grad. Pico", "Grad. Medio", "Insuf."]
@@ -78,103 +85,86 @@ def generar_word(d):
         ("Aórtica", d['v_ao'], d['gp_ao'], d['gm_ao'], d['i_ao'])
     ]
     for i, (n, v, gp, gm, ins) in enumerate(valvs, start=1):
-        t2.cell(i,0).text = n
-        t2.cell(i,1).text = v
-        t2.cell(i,2).text = gp
-        t2.cell(i,3).text = gm
-        t2.cell(i,4).text = ins
+        for j, val in enumerate([n, v, gp, gm, ins]): t2.cell(i,j).text = str(val)
 
     # CAPÍTULO III: CONCLUSIÓN
-    doc.add_paragraph("\nCAPÍTULO III: CONCLUSIÓN").bold = True
-    doc.add_paragraph(d['conclu']).alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    
-    # Firma Digital
-    doc.add_paragraph("\n" + "_"*40)
-    doc.add_paragraph("Dr. FRANCISCO ALBERTO PASTORE\nMN 74144")
+    doc.add_paragraph("\nCAPÍTULO III: CONCLUSIÓN DIAGNÓSTICA").bold = True
+    p_conclu = doc.add_paragraph(d['conclu'])
+    p_conclu.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    # FIRMA
+    doc.add_paragraph("\n\n" + "_"*40)
+    doc.add_paragraph("Dr. FRANCISCO ALBERTO PASTORE\nMN 74144 - Médico Cardiólogo")
     if os.path.exists("firma_doctor.png"):
         doc.add_picture("firma_doctor.png", width=Inches(1.8))
 
-    # ANEXO DE IMÁGENES 4x2
+    # ANEXO 4x2
     doc.add_page_break()
     doc.add_paragraph("ANEXO DE IMÁGENES").bold = True
     t_img = doc.add_table(rows=4, cols=2)
     t_img.style = 'Table Grid'
     for row in t_img.rows:
-        row.height = Cm(5) # Espacio para la foto
+        row.height = Cm(6) # Tamaño grande para las fotos
 
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)
     return out
 
-# --- 3. INTERFAZ STREAMLIT ---
+# --- 3. INTERFAZ ---
 st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("🫀 Validación Médica")
+st.title("🫀 Generador de Informes Cardiológicos")
 
-pdf = st.file_uploader("Subir PDF", type=["pdf"])
-ex = extraer_datos_pdf(pdf)
+file = st.file_uploader("Subir PDF del estudio", type=["pdf"])
+ex = extraer_datos_pdf(file)
 
-with st.form("f"):
-    st.subheader("📋 Datos Paciente")
+with st.form("form_medico"):
     c1, c2, c3, c4 = st.columns(4)
-    pac = c1.text_input("Paciente", value=ex["pac"])
-    fec = c2.date_input("Fecha", value=ex["fecha"], format="DD/MM/YYYY")
+    pac = c1.text_input("Nombre del Paciente", value=ex["pac"])
+    fec = c2.date_input("Fecha de Estudio", value=ex["fecha"])
     peso = c3.text_input("Peso (Kg)", value=ex["peso"])
     alt = c4.text_input("Altura (cm)")
 
-    st.divider()
-    
-    # ECOCARDIOGRAMA (ORDEN EXCEL)
-    st.subheader("📏 Ecocardiograma")
+    st.subheader("📏 Mediciones Estructurales")
     e1, e2, e3, e4, e5 = st.columns(5)
-    ddvd = e1.text_input("DDVD")
-    ddvi = e2.text_input("DDVI")
-    dsvi = e3.text_input("DSVI")
-    fa = e4.text_input("FA (%)")
-    es = e5.text_input("ES (mm)")
+    ddvd, ddvi, dsvi = e1.text_input("DDVD"), e2.text_input("DDVI"), e3.text_input("DSVI")
+    fa, es = e4.text_input("FA (%)"), e5.text_input("ES (mm)")
     
     e1b, e2b, e3b, e4b, e5b = st.columns(5)
-    siv = e1b.text_input("SIV")
-    pp = e2b.text_input("PP")
-    drao = e3b.text_input("DRAO")
-    ai = e4b.text_input("AI")
-    aao = e5b.text_input("AAO")
+    siv, pp, drao = e1b.text_input("SIV"), e2b.text_input("PP"), e3b.text_input("DRAO")
+    ai, aao = e4b.text_input("AI"), e5b.text_input("AAO")
 
-    st.divider()
+    st.subheader("🔊 Hallazgos Doppler")
+    # Tabla visualmente alineada
+    col_v, col_vel, col_gp, col_gm, col_ins = st.columns([1,1,1,1,1])
+    col_v.write("**Válvula**")
+    col_vel.write("**Vel. cm/s**")
+    col_gp.write("**Grad. Pico**")
+    col_gm.write("**Grad. Medio**")
+    col_ins.write("**Insuficiencia**")
 
-    # DOPPLER (ORDEN WORD Y ALINEADO)
-    st.subheader("🔊 Eco-Doppler")
-    
-    # Encabezados de tabla manuales
-    h = st.columns([1.5, 2, 2, 2, 2])
-    h[0].write("**Válvula**")
-    h[1].write("**Velocidad**")
-    h[2].write("**Grad. Pico**")
-    h[3].write("**Grad. Medio**")
-    h[4].write("**Insuficiencia**")
-
-    def fila_doppler(nombre, key):
-        cols = st.columns([1.5, 2, 2, 2, 2])
-        cols[0].write(nombre)
-        v = cols[1].text_input(f"v_{key}", label_visibility="collapsed")
-        gp = cols[2].text_input(f"gp_{key}", label_visibility="collapsed")
-        gm = cols[3].text_input(f"gm_{key}", label_visibility="collapsed")
-        ins = cols[4].selectbox(f"i_{key}", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
+    def fila(nombre, k):
+        c = st.columns([1,1,1,1,1])
+        c[0].write(nombre)
+        v = c[1].text_input(f"v_{k}", label_visibility="collapsed")
+        gp = c[2].text_input(f"gp_{k}", label_visibility="collapsed")
+        gm = c[3].text_input(f"gm_{k}", label_visibility="collapsed")
+        ins = c[4].selectbox(f"i_{k}", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
         return v, gp, gm, ins
 
-    v_tri, gp_tri, gm_tri, i_tri = fila_doppler("Tricúspide", "tri")
-    v_pul, gp_pul, gm_pul, i_pul = fila_doppler("Pulmonar", "pul")
-    v_mit, gp_mit, gm_mit, i_mit = fila_doppler("Mitral", "mit")
-    v_ao, gp_ao, gm_ao, i_ao = fila_doppler("Aórtica", "ao")
+    v_tri, gp_tri, gm_tri, i_tri = fila("Tricúspide", "t")
+    v_pul, gp_pul, gm_pul, i_pul = fila("Pulmonar", "p")
+    v_mit, gp_mit, gm_mit, i_mit = fila("Mitral", "m")
+    v_ao, gp_ao, gm_ao, i_ao = fila("Aórtica", "a")
 
-    st.divider()
-    conclu = st.text_area("Conclusión y Comentarios", "Dentro de parámetros normales.")
+    conclu = st.text_area("Conclusión Final", "Ecocardiograma Doppler color con parámetros conservados.")
     
-    submit = st.form_submit_button("🚀 GENERAR INFORME")
+    submit = st.form_submit_button("🚀 GENERAR INFORME PROFESIONAL")
 
 if submit:
+    sc = "" # Aquí podrías agregar el cálculo de SC si lo necesitas
     res = {
-        "pac": pac.upper(), "fecha": fec.strftime("%d/%m/%Y"), "peso": peso, "alt": alt,
+        "pac": pac.upper(), "fecha": fec.strftime("%d/%m/%Y"), "peso": peso, "alt": alt, "sc": "---",
         "ddvd": ddvd, "ddvi": ddvi, "dsvi": dsvi, "fa": fa, "es": es,
         "siv": siv, "pp": pp, "drao": drao, "ai": ai, "aao": aao,
         "v_tri": v_tri, "gp_tri": gp_tri, "gm_tri": gm_tri, "i_tri": i_tri,
@@ -183,5 +173,4 @@ if submit:
         "v_ao": v_ao, "gp_ao": gp_ao, "gm_ao": gm_ao, "i_ao": i_ao,
         "conclu": conclu
     }
-    archivo = generar_word(res)
-    st.download_button("📥 Descargar Word", data=archivo, file_name=f"Informe_{pac}.docx")
+    st.download_button("📥 DESCARGAR INFORME", data=generar_word(res), file_name=f"Informe_{pac}.docx")
