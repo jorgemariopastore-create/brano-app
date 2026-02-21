@@ -9,14 +9,13 @@ import io
 import os
 from groq import Groq
 
-# 1. CONFIGURACIÓN DE SEGURIDAD
+# 1. CONFIGURACIÓN DE PÁGINA Y SEGURIDAD
 st.set_page_config(page_title="Cardio-Report IA", layout="centered")
 
 try:
-    # Intenta leer desde secrets
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    st.error("⚠️ Error de Configuración: No se encontró la clave API en Secrets.")
+    st.error("⚠️ Error: No se encontró la clave GROQ_API_KEY en los Secrets.")
     st.stop()
 
 def extraer_datos_limpios(file):
@@ -45,46 +44,37 @@ def extraer_datos_limpios(file):
 
 def redactar_con_ia(datos_dict):
     if not datos_dict:
-        return "Datos no detectados en el archivo."
-
-    datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if v])
-
-    prompt = f"""
-    Actúa como un cardiólogo. Redacta los hallazgos técnicos de un ecocardiograma.
-    DATOS:
-    {datos_texto}
-    REGLAS: Redacción técnica, formal, SIN recomendaciones ni tratamientos. Sé breve.
-    """
+        return "No se detectaron datos."
+    
+    contexto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if v])
+    prompt = f"Actúa como cardiólogo. Redacta los hallazgos técnicos de este ecocardiograma de forma profesional y concisa. DATOS: {contexto}. REGLAS: Sin recomendaciones, sin tratamiento, solo descripción técnica."
     
     try:
-        # MODELO ACTUALIZADO A 3.1 (El que funciona hoy)
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant", 
+            model="llama-3.1-8b-instant", # Modelo actualizado 2026
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"Error en redacción (IA): {str(e)}"
+        return f"Error en IA: {str(e)}"
 
 def generar_word(datos, texto_ia, pdf_file):
     doc = Document()
-    
-    # Encabezado
     titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    paciente = datos.get('Paciente', 'BALEIRON MANUEL')
-    fecha = datos.get('Fecha de estudio', '27/12/2025')
+    nombre_p = datos.get('Paciente', 'BALEIRON MANUEL')
+    fecha_p = datos.get('Fecha de estudio', '27/12/2025')
 
     p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {paciente}\n").bold = True
-    p.add_run(f"FECHA: {fecha}").bold = True
+    p.add_run(f"PACIENTE: {nombre_p}\n").bold = True
+    p.add_run(f"FECHA: {fecha_p}").bold = True
 
     doc.add_heading('Descripción Técnica', level=1)
     doc.add_paragraph(texto_ia)
 
-    # Anexo de Imágenes 4x2
+    # Anexo Imágenes 4x2
     doc.add_page_break()
     doc.add_heading('Anexo de Imágenes', level=1)
     
@@ -104,8 +94,38 @@ def generar_word(datos, texto_ia, pdf_file):
                 run = cell.paragraphs[0].add_run()
                 run.add_picture(imgs[i], width=Inches(3.0))
     except:
-        doc.add_paragraph("No se pudieron extraer imágenes del PDF.")
+        doc.add_paragraph("Imágenes no disponibles.")
 
-    # FIRMA
-    ruta_f = "firma_doctor.png"
-    if os.path.exists(ruta_f):
+    # Firma
+    ruta_firma = "firma_doctor.png"
+    if os.path.exists(ruta_firma):
+        f_p = doc.add_paragraph("\n")
+        f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        f_p.add_run().add_picture(ruta_firma, width=Inches(1.8))
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# --- INTERFAZ ---
+st.title("Cardio-Report IA 🩺")
+st.write("Sube los archivos para generar el informe editable.")
+
+col1, col2 = st.columns(2)
+with col1:
+    f_excel = st.file_uploader("Excel/CSV", type=["csv", "xlsx", "xls"])
+with col2:
+    f_pdf = st.file_uploader("PDF", type=["pdf"])
+
+if f_excel and f_pdf:
+    if st.button("🚀 Generar Informe"):
+        with st.spinner("Procesando..."):
+            datos_ext = extraer_datos_limpios(f_excel)
+            texto_final = redactar_con_ia(datos_ext)
+            docx_out = generar_word(datos_ext, texto_final, f_pdf)
+            
+            st.success("¡Informe listo!")
+            # Definimos el nombre para el archivo
+            nombre_archivo = datos_ext.get('Paciente', 'Informe').replace(" ", "_")
+            st.download_button("📥 Descargar Word", docx_out, f"Informe_{nombre_archivo}.docx")
