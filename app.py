@@ -2,144 +2,101 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import fitz  # PyMuPDF
 import io
 import os
 from groq import Groq
 
-# 1. CONFIGURACIÓN Y SEGURIDAD
-st.set_page_config(page_title="Generador Cardio-IA", layout="wide")
-
+# 1. CONEXIÓN CON GROQ (Secrets)
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
-    st.error("Error: No se encontró la clave GROQ_API_KEY en los Secrets.")
+    st.error("Error: No se encontró 'GROQ_API_KEY' en los Secrets.")
     st.stop()
 
-# --- FUNCIONES DE EXTRACCIÓN (SOLO EXCEL) ---
+def extraer_datos(file):
+    """Lee Excel o CSV y extrae los datos del ecógrafo"""
+    if file.name.endswith('.csv'):
+        df = pd.read_csv(file, header=None)
+    else:
+        df = pd.read_excel(file, header=None)
+    
+    datos = {}
+    for _, row in df.iterrows():
+        key = str(row[0]).strip()
+        val = str(row[1]).strip() if pd.notna(row[1]) else ""
+        if key and key != "nan":
+            datos[key] = val
+    return datos
 
-def buscar_dato_excel(datos, keywords):
-    """Busca valores en el diccionario ignorando mayúsculas y caracteres extraños"""
-    for k, v in datos.items():
-        k_clean = str(k).lower().strip()
-        if any(word in k_clean for word in keywords):
-            return str(v).replace("nan", "").strip()
-    return ""
-
-def extraer_todo_el_excel(file):
-    """Lee todas las hojas del Excel para captar Cálculos y Doppler"""
-    datos_acumulados = {}
-    try:
-        # Cargamos todas las pestañas
-        dict_dfs = pd.read_excel(file, sheet_name=None, header=None)
-        for nombre_hoja, df in dict_dfs.items():
-            for _, row in df.iterrows():
-                if len(row) >= 2:
-                    k = str(row[0]).strip()
-                    v = row[1]
-                    if k and k.lower() != "nan":
-                        datos_acumulados[k] = v
-        return datos_acumulados
-    except Exception as e:
-        st.error(f"Error crítico leyendo el Excel: {e}")
-        return {}
-
-def redactar_estilo_medico(datos_dict):
-    """Convierte los datos del Excel en un informe narrativo técnico (Sin inventar)"""
-    # Filtramos solo lo que tiene valor para no ensuciar el prompt
-    contexto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if str(v).strip() != ""])
+def redactar_con_ia(datos_dict):
+    """Envía los datos a Groq para redacción médica pura"""
+    datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items()])
     
     prompt = f"""
-    Eres un cardiólogo redactando un informe real. 
-    USA ÚNICAMENTE ESTOS DATOS DEL EXCEL:
-    {contexto}
-
-    INSTRUCCIONES DE FORMATO:
-    1. Divide en: 'ECOCARDIOGRAMA 2D', 'DOPPLER CARDÍACO' y 'CONCLUSIÓN'.
-    2. Redacta PÁRRAFOS con terminología médica, NO una lista de valores.
-       - Si el Excel dice 'DDVI: 61', tú redactas 'Diámetro diastólico del ventrículo izquierdo de 61 mm'.
-       - Si el Excel dice 'FE: 31%', tú redactas 'Deterioro severo de la función sistólica (FE 31%)'.
-    3. El estilo debe ser sobrio y descriptivo. 
-    4. La CONCLUSIÓN debe ser un resumen técnico de los valores más alterados presentes en los datos.
-    5. NO inventes patologías que no se desprendan de los números entregados.
+    Actúa como un cardiólogo. Redacta los hallazgos de un ecocardiograma y doppler.
+    DATOS:
+    {datos_texto}
+    
+    REGLAS:
+    - Redacción técnica y formal.
+    - NO incluyas recomendaciones ni tratamientos.
+    - NO inventes datos.
+    - Sé directo. Si hay 'Observaciones' en los datos, inclúyelas.
     """
     
-    try:
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0 # Cero creatividad, máxima fidelidad al dato
-        )
-        return completion.choices[0].message.content
-    except:
-        return "Error en la conexión con la IA."
+    completion = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+    )
+    return completion.choices[0].message.content
 
-def generar_word_profesional(datos, texto_ia, pdf_file, firma_path):
+def generar_word(datos, texto_ia, pdf_file):
     doc = Document()
     
-    # --- CONFIGURACIÓN DE FUENTE ---
-    style = doc.styles['Normal']
-    style.font.name = 'Arial'
-    style.font.size = Pt(10)
-
-    # 1. ENCABEZADO CENTRADO
-    t = doc.add_heading('INFORME ECOCARDIOGRÁFICO Y DOPPLER COLOR', 0)
-    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Encabezado
+    titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # 2. BLOQUE DE DATOS (Mapeo directo del Excel)
-    nombre = buscar_dato_excel(datos, ["paciente", "nombre"])
-    fecha = buscar_dato_excel(datos, ["fecha"])
-    peso = buscar_dato_excel(datos, ["peso"])
-    altura = buscar_dato_excel(datos, ["altura", "talla"])
-    edad = buscar_dato_excel(datos, ["edad"])
-    sc = buscar_dato_excel(datos, ["superficie", "s.c", "sc"])
+    p = doc.add_paragraph()
+    p.add_run("PACIENTE: ").bold = True
+    p.add_run(f"{datos.get('Paciente', 'N/A')}\n")
+    p.add_run("FECHA: ").bold = True
+    p.add_run(f"{datos.get('Fecha de estudio', 'N/A')}")
 
-    p_header = doc.add_paragraph()
-    p_header.add_run(f"PACIENTE: {nombre}").bold = True
-    p_header.add_run(f"\t\tFECHA: {fecha}").bold = True
-    
-    p_datos = doc.add_paragraph()
-    p_datos.add_run(f"EDAD: {edad}  |  PESO: {peso} kg  |  ALTURA: {altura} cm  |  S.C: {sc} m²")
-    
-    doc.add_paragraph("_" * 75) # Línea divisoria técnica
+    # Cuerpo redactado por IA
+    doc.add_heading('Descripción Técnica', level=1)
+    doc.add_paragraph(texto_ia)
 
-    # 3. HALLAZGOS Y CONCLUSIÓN (JUSTIFICADO)
-    for linea in texto_ia.split('\n'):
-        if linea.strip():
-            p = doc.add_paragraph(linea.strip())
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            # Resaltar encabezados de sección
-            if any(x in linea for x in ["ECOCARDIOGRAMA 2D", "DOPPLER CARDÍACO", "CONCLUSIÓN"]):
-                p.runs[0].bold = True
-
-    # 4. ANEXO DE IMÁGENES (PDF - 4x2)
+    # Anexo de Imágenes (4 filas x 2 columnas)
     doc.add_page_break()
-    doc.add_heading('ANEXO DE IMÁGENES', level=1)
-    try:
-        pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-        img_list = []
-        for page in pdf_doc:
-            for img_info in page.get_images(full=True):
-                img_list.append(io.BytesIO(pdf_doc.extract_image(img_info[0])["image"]))
+    doc.add_heading('Anexo de Imágenes', level=1)
+    
+    pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    imgs = []
+    for page in pdf_doc:
+        for img_info in page.get_images(full=True):
+            imgs.append(io.BytesIO(pdf_doc.extract_image(img_info[0])["image"]))
 
-        if img_list:
-            table = doc.add_table(rows=4, cols=2)
-            for i in range(min(len(img_list), 8)):
-                row, col = i // 2, i % 2
-                paragraph = table.rows[row].cells[col].paragraphs[0]
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = paragraph.add_run()
-                run.add_picture(img_list[i], width=Inches(2.8))
-    except: pass
+    if imgs:
+        table = doc.add_table(rows=4, cols=2)
+        for i in range(min(len(imgs), 8)):
+            row, col = i // 2, i % 2
+            paragraph = table.rows[row].cells[col].paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = paragraph.add_run()
+            run.add_picture(imgs[i], width=Inches(3.0))
 
-    # 5. FIRMA (Garantizada a la derecha)
-    if os.path.exists(firma_path):
-        doc.add_paragraph("\n\n")
+    # FIRMA DIGITAL (firma_doctor.png)
+    ruta_firma = "firma_doctor.png"
+    if os.path.exists(ruta_firma):
+        doc.add_paragraph("\n")
         f_para = doc.add_paragraph()
         f_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        f_para.add_run().add_picture(firma_path, width=Inches(2.0))
+        f_para.add_run().add_picture(ruta_firma, width=Inches(1.8))
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -147,27 +104,21 @@ def generar_word_profesional(datos, texto_ia, pdf_file, firma_path):
     return buffer
 
 # --- INTERFAZ ---
-st.title("👨‍⚕️ Generador de Informes Médicos")
-
-# Verificador de firma en pantalla
-if os.path.exists("firma_doctor.png"):
-    st.sidebar.success("✅ Firma cargada correctamente")
-else:
-    st.sidebar.error("❌ Falta 'firma_doctor.png' en el repositorio")
+st.title("Cardio-Report IA 🩺")
 
 c1, c2 = st.columns(2)
 with c1:
-    f_excel = st.file_uploader("Subir Excel de Cálculos (Fuente de datos)", type=["xlsx", "xls"])
+    f_excel = st.file_uploader("Subir Cálculos (Excel/CSV)", type=["csv", "xlsx"])
 with c2:
-    f_pdf = st.file_uploader("Subir PDF de Capturas (Fuente de imágenes)", type=["pdf"])
+    f_pdf = st.file_uploader("Subir PDF (Imágenes)", type=["pdf"])
 
 if f_excel and f_pdf:
-    if st.button("🚀 Generar Informe Médico Final"):
-        with st.spinner("Procesando datos del Excel..."):
-            datos_excel = extraer_todo_el_excel(f_excel)
-            texto_redactado = redactar_estilo_medico(datos_excel)
-            docx_file = generar_word_profesional(datos_excel, texto_redactado, f_pdf, "firma_doctor.png")
+    if st.button("Generar Informe"):
+        with st.spinner("Procesando..."):
+            datos_ext = extraer_datos(f_excel)
+            texto_ia = redactar_con_ia(datos_ext)
+            docx_file = generar_word(datos_ext, texto_ia, f_pdf)
             
-            st.success("Informe generado con éxito.")
-            st.download_button("📥 Descargar Word Justificado", docx_file, 
-                               f"Informe_{buscar_dato_excel(datos_excel, ['paciente'])}.docx")
+            st.success("¡Informe listo!")
+            st.download_button("📥 Descargar Word", docx_file, 
+                               f"Informe_{datos_ext.get('Paciente','Cardio')}.docx")
