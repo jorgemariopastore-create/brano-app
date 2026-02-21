@@ -20,21 +20,24 @@ def buscar_dato_en_toda_la_hoja(df, terminos):
             for t in terminos:
                 if t.lower() in celda:
                     try:
+                        # Intentamos tomar el valor de la celda inmediatamente a la derecha
                         res = str(df.iloc[r, c + 1]).strip()
-                        if res.lower() != "nan" and res != "": return res
+                        if res.lower() != "nan" and res != "" and res.lower() != "none":
+                            return res
                     except: pass
     return "N/A"
 
 def extraer_datos_excel_manual(file):
     info = {"paciente": {}, "eco": {}, "doppler": []}
     try:
-        xls = pd.ExcelFile(file)
+        # Cargar Excel con soporte para formatos viejos
+        xls = pd.ExcelFile(file, engine='xlrd' if file.name.endswith('.xls') else None)
         df_eco = pd.read_excel(xls, "Ecodato", header=None)
         
-        # Búsqueda ultra-flexible de paciente
+        # Búsqueda ultra-flexible de datos del paciente
         info["paciente"]["Nombre"] = buscar_dato_en_toda_la_hoja(df_eco, ["Paciente", "Nombre", "BALEIRON"])
         info["paciente"]["Peso"] = buscar_dato_en_toda_la_hoja(df_eco, ["Peso", "Kg"])
-        info["paciente"]["Altura"] = buscar_dato_en_toda_la_ho_hoja(df_eco, ["Altura", "Cm"])
+        info["paciente"]["Altura"] = buscar_dato_en_toda_la_hoja(df_eco, ["Altura", "Cm"])
         info["paciente"]["BSA"] = buscar_dato_en_toda_la_hoja(df_eco, ["DUBOIS", "Superficie", "SC"])
 
         # Mediciones técnicas
@@ -49,7 +52,8 @@ def extraer_datos_excel_manual(file):
         }
         for sigla, nombre in mapeo.items():
             val = buscar_dato_en_toda_la_hoja(df_eco, [sigla])
-            if val != "N/A": info["eco"][nombre] = val
+            if val != "N/A": 
+                info["eco"][nombre] = val
 
         # Doppler
         if "Doppler" in xls.sheet_names:
@@ -59,80 +63,11 @@ def extraer_datos_excel_manual(file):
                 if any(x in v for x in ["Tric", "Pulm", "Mit", "Aór"]):
                     info["doppler"].append(f"{v}: {df_dop.iloc[i, 1]} cm/s")
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error en la extracción: {e}")
     return info
 
 def redactar_ia(info):
     prompt = f"""
-    Eres Cardiólogo. Redacta:
-    1. HALLAZGOS: Párrafo técnico en prosa. DDVI > 56mm es dilatación. FA < 27% es deterioro. 
-    2. CONCLUSIÓN: Diagnóstico final breve.
-    Datos: {info['eco']} | Doppler: {info['doppler']}
-    """
-    res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}], temperature=0)
-    return res.choices[0].message.content
-
-def generar_word(info, texto_ia, f_pdf):
-    doc = Document()
-    
-    # Encabezado
-    tit = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
-    tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {info['paciente'].get('Nombre')}\n").bold = True
-    p.add_run(f"FECHA: 27/01/2026\n")
-    p.add_run(f"PESO: {info['paciente'].get('Peso')} kg | ALTURA: {info['paciente'].get('Altura')} cm | SC: {info['paciente'].get('BSA')} m²")
-
-    # Secciones
-    texto_ia = texto_ia.replace("HALLAZGOS:", "").strip()
-    partes = texto_ia.split("CONCLUSIÓN")
-    
-    doc.add_heading('Hallazgos', level=1)
-    doc.add_paragraph(partes[0].strip())
-    
-    if len(partes) > 1:
-        doc.add_heading('Conclusión', level=1)
-        doc.add_paragraph(partes[1].replace(":", "").strip())
-
-    # Imágenes
-    doc.add_page_break()
-    doc.add_heading('Anexo de Imágenes', level=1)
-    try:
-        f_pdf.seek(0)
-        pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
-        imgs = [io.BytesIO(pdf.extract_image(img[0])["image"]) for p in pdf for img in p.get_images()]
-        if imgs:
-            t = doc.add_table(rows=4, cols=2)
-            for i in range(min(len(imgs), 8)):
-                run = t.rows[i//2].cells[i%2].paragraphs[0].add_run()
-                run.add_picture(imgs[i], width=Inches(2.8))
-    except: pass
-
-    # --- FIRMA MÉDICA (FORZADA) ---
-    doc.add_paragraph("\n\n")
-    f_p = doc.add_paragraph()
-    f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    if os.path.exists("firma_doctor.png"):
-        f_p.add_run().add_picture("firma_doctor.png", width=Inches(2.0))
-    else:
-        # Esto asegura que si no hay imagen, salga la línea de firma
-        f_p.add_run("__________________________\n").bold = True
-        f_p.add_run("Firma y Sello del Médico").bold = True
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf
-
-# Streamlit
-st.title("CardioReport 🩺")
-f_xl = st.file_uploader("Subir Excel", type=["xls", "xlsx"])
-f_pd = st.file_uploader("Subir PDF", type="pdf")
-
-if f_xl and f_pd:
-    if st.button("Generar Informe"):
-        data = extraer_datos_excel_manual(f_xl)
-        txt = redactar_ia(data)
-        word = generar_word(data, txt, f_pd)
-        st.download_button("Descargar Informe", word, "Informe_Final.docx")
+    Eres un Cardiólogo experto. Redacta un informe médico basado en:
+    Mediciones: {info['eco']}
+    Doppler: {info['do
