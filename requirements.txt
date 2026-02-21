@@ -4,3 +4,6 @@ python-docx
 pymupdf
 groq
 openpyxl
+xlrd
+
+
