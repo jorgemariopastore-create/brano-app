@@ -17,7 +17,8 @@ st.title("Generador Profesional de Informe Ecocardiográfico")
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
 
-# ---------------- BUSCADOR UNIVERSAL ----------------
+
+# ---------------- FUNCION BUSCAR VALOR ----------------
 
 def buscar_valor(df, palabra):
     for i in range(len(df)):
@@ -29,6 +30,7 @@ def buscar_valor(df, palabra):
                     if valor and valor.lower() != "nan":
                         return valor.strip()
     return None
+
 
 # ---------------- PROCESAMIENTO ----------------
 
@@ -83,7 +85,7 @@ if excel_file and pdf_file:
         "doppler": doppler_lista
     }
 
-    # ---------------- LLAMADA DIRECTA A GROQ ----------------
+    # ---------------- LLAMADA DIRECTA A API GROQ ----------------
 
     try:
         api_key = st.secrets["GROQ_API_KEY"]
@@ -92,14 +94,14 @@ if excel_file and pdf_file:
 Actúa como cardiólogo clínico.
 Redacta un INFORME ECOCARDIOGRAMA DOPPLER COLOR formal hospitalario.
 
-Reglas:
+Reglas estrictas:
 - No inventar datos.
 - No agregar recomendaciones.
 - No explicar al paciente.
 - Si falta un dato, omitirlo.
-- Estructura profesional médica real.
+- Redacción médica profesional real.
 
-Datos:
+Datos clínicos:
 {json.dumps(datos_json, indent=2)}
 """
 
@@ -137,7 +139,7 @@ Datos:
     doc = Document()
     doc.add_paragraph(informe)
 
-    # ---------------- IMÁGENES 4x2 ----------------
+    # ---------------- IMÁGENES 4 FILAS x 2 COLUMNAS ----------------
 
     pdf_bytes = pdf_file.read()
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
