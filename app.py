@@ -12,13 +12,12 @@ import os
 import requests
 
 st.set_page_config(page_title="Informe Ecocardiograma IA")
-st.title("Generador Profesional de Informe Ecocardiográfico")
+
+# ESTA LINEA ES PARA CONFIRMAR QUE ESTA VERSION ES NUEVA
+st.write("VERSION DEFINITIVA SIN GROQ SDK")
 
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
-
-
-# ---------------- FUNCION BUSCAR VALOR ----------------
 
 def buscar_valor(df, palabra):
     for i in range(len(df)):
@@ -30,9 +29,6 @@ def buscar_valor(df, palabra):
                     if valor and valor.lower() != "nan":
                         return valor.strip()
     return None
-
-
-# ---------------- PROCESAMIENTO ----------------
 
 if excel_file and pdf_file:
 
@@ -85,8 +81,6 @@ if excel_file and pdf_file:
         "doppler": doppler_lista
     }
 
-    # ---------------- LLAMADA DIRECTA A API GROQ ----------------
-
     try:
         api_key = st.secrets["GROQ_API_KEY"]
 
@@ -94,14 +88,14 @@ if excel_file and pdf_file:
 Actúa como cardiólogo clínico.
 Redacta un INFORME ECOCARDIOGRAMA DOPPLER COLOR formal hospitalario.
 
-Reglas estrictas:
+Reglas:
 - No inventar datos.
 - No agregar recomendaciones.
 - No explicar al paciente.
 - Si falta un dato, omitirlo.
-- Redacción médica profesional real.
+- Estilo médico real.
 
-Datos clínicos:
+Datos:
 {json.dumps(datos_json, indent=2)}
 """
 
@@ -131,15 +125,11 @@ Datos clínicos:
         informe = response.json()["choices"][0]["message"]["content"]
 
     except Exception as e:
-        st.error(f"Error llamando a Groq API: {str(e)}")
+        st.error(f"Error API: {str(e)}")
         st.stop()
-
-    # ---------------- CREAR WORD ----------------
 
     doc = Document()
     doc.add_paragraph(informe)
-
-    # ---------------- IMÁGENES 4 FILAS x 2 COLUMNAS ----------------
 
     pdf_bytes = pdf_file.read()
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -166,8 +156,6 @@ Datos clínicos:
                         width=Inches(2.4)
                     )
                     idx += 1
-
-    # ---------------- FIRMA ----------------
 
     if os.path.exists("firma.png"):
         doc.add_picture("firma.png", width=Inches(2))
