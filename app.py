@@ -12,13 +12,13 @@ from groq import Groq
 # 1. CLIENTE GROQ
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# Diccionario de traducción técnica para evitar errores de la IA
-TRADUCCIONES = {
+# Diccionario Maestro para traducir siglas a nombres técnicos reales
+DICCIONARIO_TECNICO = {
     "DDVD": "Diámetro Diastólico del Ventrículo Derecho",
     "DDVI": "Diámetro Diastólico del Ventrículo Izquierdo",
     "DSVI": "Diámetro Sistólico del Ventrículo Izquierdo",
     "FA": "Fracción de Acortamiento",
-    "ES": "Distancia Mitro-Septal (ES)",
+    "ES": "Distancia Mitro-Septal (EPSS)",
     "DDSIV": "Espesor del Septum Interventricular",
     "DDPP": "Espesor de la Pared Posterior",
     "DRAO": "Diámetro de la Raíz Aórtica",
@@ -29,117 +29,137 @@ TRADUCCIONES = {
 }
 
 def extraer_datos_excel(file):
-    """Lee ambas hojas del único archivo Excel"""
-    datos = {}
+    """Lee las dos hojas del Excel y extrae datos de paciente y mediciones"""
+    datos = {"mediciones": {}, "doppler": [], "paciente": {}}
+    
     try:
-        # Leer hoja de Ecocardiograma
-        df_eco = pd.read_excel(file, sheet_name="Ecodato", header=None)
-        for _, row in df_eco.iterrows():
-            k = str(row[0]).strip()
-            v = str(row[1]).strip()
-            if k and k != "nan": datos[k] = v
-            # Capturar peso/altura de las columnas de la derecha si están ahí
-            if "Peso" in str(row[8]): datos["Peso"] = row[9]
-            if "Altura" in str(row[8]): datos["Altura"] = row[9]
-            if "DUBOIS" in str(row[10]): datos["BSA"] = row[11]
+        # Cargar todas las hojas
+        xls = pd.ExcelFile(file)
+        
+        # 1. Procesar Hoja "Ecodato"
+        if "Ecodato" in xls.sheet_names:
+            df_eco = pd.read_excel(xls, "Ecodato", header=None)
+            # Datos generales (basado en la estructura de Sonoscape)
+            datos["paciente"]["Nombre"] = str(df_eco.iloc[3, 1]) if len(df_eco) > 3 else "N/A"
+            # Peso, Altura y BSA suelen estar en las columnas I, J, K (índices 8, 9, 11)
+            try:
+                datos["paciente"]["Peso"] = df_eco.iloc[7, 9] 
+                datos["paciente"]["Altura"] = df_eco.iloc[8, 9]
+                datos["paciente"]["BSA"] = df_eco.iloc[7, 11]
+            except: pass
 
-        # Leer hoja de Doppler
-        df_dop = pd.read_excel(file, sheet_name="Doppler", header=None)
-        datos["Doppler_Info"] = df_dop.to_string() # Enviamos la tabla completa a la IA
+            # Mediciones de cavidades
+            for i in range(6, 18): # Rango típico de siglas
+                if i < len(df_eco):
+                    sigla = str(df_eco.iloc[i, 0]).strip()
+                    valor = str(df_eco.iloc[i, 1]).strip()
+                    ref = str(df_eco.iloc[i, 3]).strip()
+                    if sigla in DICCIONARIO_TECNICO:
+                        datos["mediciones"][DICCIONARIO_TECNICO[sigla]] = f"{valor} (Ref: {ref})"
+
+        # 2. Procesar Hoja "Doppler"
+        if "Doppler" in xls.sheet_names:
+            df_dop = pd.read_excel(xls, "Doppler", header=None)
+            for i in range(2, len(df_dop)):
+                valvula = str(df_dop.iloc[i, 0]).strip()
+                vel = str(df_dop.iloc[i, 1]).strip()
+                if valvula in ["Tricúspide", "Pulmonar", "Mitral", "Aórtica"]:
+                    datos["doppler"].append(f"Válvula {valvula}: {vel} cm/seg")
+                    
     except Exception as e:
-        st.error(f"Error leyendo las hojas del Excel: {e}")
+        st.error(f"Error técnico al leer el Excel: {e}")
     return datos
 
-def redactar_informe_ia(datos):
-    # Preparamos los datos con nombres completos para que la IA no invente
-    lista_datos = ""
-    for k, v in datos.items():
-        if k in TRADUCCIONES:
-            lista_datos += f"- {TRADUCCIONES[k]}: {v}\n"
-        elif k not in ["Doppler_Info", "Peso", "Altura", "BSA"]:
-            lista_datos += f"- {k}: {v}\n"
-
+def redactar_informe_estricto(datos):
+    """Genera el texto usando ÚNICAMENTE los datos del Excel"""
+    contexto = "\n".join([f"{k}: {v}" for k, v in datos["mediciones"].items()])
+    contexto_dop = "\n".join(datos["doppler"])
+    
     prompt = f"""
-    Eres un Cardiólogo experto. Redacta los 'Hallazgos' de un ecocardiograma.
-    DATOS TÉCNICOS:
-    {lista_datos}
+    Eres un transcriptor médico. Tu tarea es redactar los hallazgos de un ecocardiograma.
+    
+    DATOS DE CAVIDADES:
+    {contexto}
+    
     DATOS DOPPLER:
-    {datos.get('Doppler_Info', 'No disponible')}
-
-    INSTRUCCIONES:
-    1. Usa NOMBRES COMPLETOS, no siglas (Ej: 'Diámetro Diastólico...' en vez de 'DDVI').
-    2. Compara valores: Si el Diámetro Diastólico (DDVI) es 61mm (Ref: 56mm), descríbelo como AUMENTADO.
-    3. Si la Fracción de Acortamiento (FA) es 25% (Ref: 27-47%), reporta DETERIORO de la función sistólica.
-    4. NO incluyas recomendaciones de estilo de vida, dieta u obesidad.
-    5. Redacta de forma corrida, técnica y formal.
+    {contexto_dop}
+    
+    REGLAS ESTRICTAS:
+    1. Prohibido inventar datos o dar consejos de salud/dieta/ejercicio.
+    2. Usa los nombres completos proporcionados.
+    3. Si el Diámetro Diastólico del VI está fuera de rango, descríbelo como 'aumentado'.
+    4. Si la Fracción de Acortamiento está baja, descríbelo como 'deterioro de la función sistólica'.
+    5. Redacta en párrafos técnicos y formales.
     """
     
-    completion = client.chat.completions.create(
+    chat = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0
+        temperature=0 # Cero creatividad
     )
-    return completion.choices[0].message.content
+    return chat.choices[0].message.content
 
 def generar_word(datos, texto_ia, pdf_file):
     doc = Document()
     
-    # ENCABEZADO CON DATOS GENERALES (Punto 5)
-    header = doc.add_heading('INFORME DE ECOCARDIOGRAMA Y DOPPLER', 0)
+    # 1. ENCABEZADO PROFESIONAL (Punto 5)
+    header = doc.add_heading('INFORME ECOCARDIOGRÁFICO Y DOPPLER COLOR', 0)
     header.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {datos.get('Paciente', 'BALEIRON MANUEL')}\n").bold = True
-    p.add_run(f"FECHA: 27/01/2026\n").bold = True
-    p.add_run(f"PESO: {datos.get('Peso', 'N/A')} kg | ALTURA: {datos.get('Altura', 'N/A')} cm | SC: {datos.get('BSA', 'N/A')} m²")
+    p.add_run(f"PACIENTE: {datos['paciente'].get('Nombre', 'N/A')}\n").bold = True
+    p.add_run(f"FECHA DE ESTUDIO: 27/01/2026\n").bold = True
+    p.add_run(f"PESO: {datos['paciente'].get('Peso', 'N/A')} kg  |  ALTURA: {datos['paciente'].get('Altura', 'N/A')} cm  |  SC: {datos['paciente'].get('BSA', 'N/A')} m²")
 
-    # HALLAZGOS (Punto 3)
-    doc.add_heading('Descripción de Hallazgos', level=1)
+    # 2. HALLAZGOS (Punto 3 y 6 corregidos)
+    doc.add_heading('Descripción Técnica', level=1)
     doc.add_paragraph(texto_ia)
 
-    # ANEXO IMÁGENES 4x2
+    # 3. ANEXO DE IMÁGENES 4x2
     doc.add_page_break()
     doc.add_heading('Anexo de Imágenes', level=1)
-    
-    pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    imgs = []
-    for page in pdf_doc:
-        for img_info in page.get_images(full=True):
-            imgs.append(io.BytesIO(pdf_doc.extract_image(img_info[0])["image"]))
+    try:
+        pdf_file.seek(0)
+        pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        imgs = []
+        for page in pdf_doc:
+            for img in page.get_images(full=True):
+                imgs.append(io.BytesIO(pdf_doc.extract_image(img[0])["image"]))
+        
+        if imgs:
+            table = doc.add_table(rows=4, cols=2)
+            for i in range(min(len(imgs), 8)):
+                run = table.rows[i//2].cells[i%2].paragraphs[0].add_run()
+                run.add_picture(imgs[i], width=Inches(2.8))
+    except: pass
 
-    if imgs:
-        table = doc.add_table(rows=4, cols=2)
-        for i in range(min(len(imgs), 8)):
-            row, col = i // 2, i % 2
-            run = table.rows[row].cells[col].paragraphs[0].add_run()
-            run.add_picture(imgs[i], width=Inches(3.0))
-
-    # FIRMA (Punto 4)
+    # 4. FIRMA (Punto 4)
     if os.path.exists("firma_doctor.png"):
         doc.add_paragraph("\n")
         f_p = doc.add_paragraph()
         f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         f_p.add_run().add_picture("firma_doctor.png", width=Inches(2.0))
 
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out
 
-# --- INTERFAZ STREAMLIT ---
-st.title("Generador de Informes Cardiológicos V2")
+# --- INTERFAZ ---
+st.title("Sistema de Informes Sonoscape 🩺")
+st.write("Procesamiento fiel de datos de Ecocardiografía.")
 
-col1, col2 = st.columns(2)
-with col1:
-    f_excel = st.file_uploader("Subir Excel (Hojas: Ecodato y Doppler)", type=["xlsx", "xls"])
-with col2:
-    f_pdf = st.file_uploader("Subir PDF de Imágenes", type=["pdf"])
+f_excel = st.file_uploader("Subir Excel (Pestañas Ecodato y Doppler)", type="xlsx")
+f_pdf = st.file_uploader("Subir PDF de Imágenes", type="pdf")
 
 if f_excel and f_pdf:
-    if st.button("🚀 Generar Informe Word"):
-        with st.spinner("Procesando datos médicos..."):
+    if st.button("🚀 Generar Informe Fiel"):
+        with st.spinner("Leyendo datos del ecógrafo..."):
             datos = extraer_datos_excel(f_excel)
-            texto_ia = redactar_informe_ia(datos)
-            docx = generar_word(datos, texto_ia, f_pdf)
-            st.success("Informe generado.")
-            st.download_button("📥 Descargar Word", docx, "Informe_Cardio.docx")
+            if datos["mediciones"]:
+                texto = redactar_informe_estricto(datos)
+                docx = generar_word(datos, texto, f_pdf)
+                st.success("Informe generado con éxito.")
+                st.download_button("📥 Descargar Word", docx, "Informe_Cardio.docx")
+            else:
+                st.error("No se pudieron leer las pestañas 'Ecodato' o 'Doppler'. Revisa el nombre de las hojas.")
