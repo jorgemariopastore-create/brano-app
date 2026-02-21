@@ -2,119 +2,120 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 import fitz
 from io import BytesIO
+from groq import Groq
+import json
 import os
 
-st.set_page_config(page_title="Informe Ecocardiograma")
+st.set_page_config(page_title="Informe Ecocardiograma IA")
 
 st.title("Generador Profesional de Informe Ecocardiográfico")
 
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
 
-def limpio(v):
-    if pd.isna(v):
-        return None
-    v = str(v).strip()
-    if v == "" or v.lower() == "nan":
-        return None
-    return v
+def buscar_valor(df, palabra):
+    for i in range(len(df)):
+        for j in range(len(df.columns)):
+            celda = str(df.iloc[i, j])
+            if palabra.lower() in celda.lower():
+                if j + 1 < len(df.columns):
+                    return str(df.iloc[i, j+1])
+    return None
 
 if excel_file and pdf_file:
 
     eco = pd.read_excel(excel_file, sheet_name="Ecodato", header=None)
     doppler = pd.read_excel(excel_file, sheet_name="Doppler", header=None)
 
-    # ---------------- DATOS CORRECTOS ----------------
-    paciente = limpio(eco.iloc[0,1])
-    fecha = limpio(eco.iloc[1,1])
+    # ---------------- EXTRAER DATOS SEGUROS ----------------
 
-    # Peso y altura correctos (los que están abajo)
-    peso = limpio(eco.iloc[14,1])
-    altura = limpio(eco.iloc[15,1])
+    paciente = buscar_valor(eco, "Paciente")
+    fecha = buscar_valor(eco, "Fecha")
+    edad = buscar_valor(eco, "Edad")
+    sexo = buscar_valor(eco, "Sexo")
+    peso = buscar_valor(eco, "Peso")
+    altura = buscar_valor(eco, "Altura")
 
-    # ---------------- CREAR DOCUMENTO ----------------
-    doc = Document()
-    style = doc.styles["Normal"]
-    style.font.name = "Calibri"
-    style.font.size = Pt(11)
+    mediciones = []
 
-    doc.add_heading("INFORME ECOCARDIOGRAMA DOPPLER COLOR", level=1)
-
-    if paciente:
-        doc.add_paragraph(f"Paciente: {paciente}")
-    if fecha:
-        doc.add_paragraph(f"Fecha: {fecha}")
-    if peso:
-        doc.add_paragraph(f"Peso: {peso} Kg")
-    if altura:
-        doc.add_paragraph(f"Altura: {altura} cm")
-
-    doc.add_paragraph("")
-
-    # ---------------- ECOCARDIOGRAMA ----------------
-    doc.add_heading("ECOCARDIOGRAMA BIDIMENSIONAL Y MODO M", level=2)
-
-    tabla = eco.iloc[4:14, 0:3]
-    tabla.columns = ["Parametro","Valor","Unidad"]
-
-    datos = {}
+    tabla = eco.iloc[4:20, 0:3]
     for _, row in tabla.iterrows():
-        p = limpio(row["Parametro"])
-        v = limpio(row["Valor"])
-        u = limpio(row["Unidad"])
-        if p and v:
-            datos[p] = f"{v} {u}" if u else v
+        p = str(row[0])
+        v = str(row[1])
+        u = str(row[2])
+        if p != "nan" and v != "nan":
+            mediciones.append({
+                "parametro": p,
+                "valor": v,
+                "unidad": u
+            })
 
-    # Cavidades
-    if "DDVI" in datos:
-        doc.add_paragraph(f"Diámetro diastólico VI: {datos['DDVI']}")
-    if "DSVI" in datos:
-        doc.add_paragraph(f"Diámetro sistólico VI: {datos['DSVI']}")
-    if "DDVD" in datos:
-        doc.add_paragraph(f"Diámetro VD: {datos['DDVD']}")
-    if "DDAI" in datos:
-        doc.add_paragraph(f"Aurícula izquierda: {datos['DDAI']}")
-    if "DRAO" in datos:
-        doc.add_paragraph(f"Raíz aórtica: {datos['DRAO']}")
+    doppler_lista = []
 
-    # Función
-    if "FA" in datos:
-        doc.add_paragraph(f"Fracción de acortamiento: {datos['FA']}")
-    if "Masa" in datos:
-        doc.add_paragraph(f"Masa ventricular izquierda: {datos['Masa']}")
-
-    doc.add_paragraph("")
-
-    # ---------------- DOPPLER ----------------
-    doc.add_heading("DOPPLER COLOR", level=2)
-
-    dop = doppler.iloc[2:8, 0:5]
-    dop.columns = ["Valvula","Vel","GradP","GradM","Insuf"]
-
+    dop = doppler.iloc[2:10, 0:5]
     for _, row in dop.iterrows():
-        valvula = limpio(row["Valvula"])
-        vel = limpio(row["Vel"])
-        if valvula and vel:
-            doc.add_paragraph(f"{valvula}: velocidad máxima {vel}")
+        if str(row[0]) != "nan":
+            doppler_lista.append({
+                "valvula": str(row[0]),
+                "velocidad": str(row[1])
+            })
 
-    doc.add_paragraph("")
+    datos_clinicos = {
+        "paciente": paciente,
+        "fecha": fecha,
+        "edad": edad,
+        "sexo": sexo,
+        "peso": peso,
+        "altura": altura,
+        "ecocardiograma": mediciones,
+        "doppler": doppler_lista
+    }
 
-    # ---------------- CONCLUSIÓN TÉCNICA ----------------
-    doc.add_heading("CONCLUSIÓN", level=2)
-    doc.add_paragraph(
-        "Estudio ecocardiográfico bidimensional y Doppler realizado. "
-        "Mediciones consignadas según valores obtenidos."
+    # ---------------- GROQ ----------------
+
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+    prompt = f"""
+Actúa como cardiólogo.
+
+Redacta un informe médico formal de ecocardiograma.
+
+Reglas estrictas:
+- No inventar ningún dato.
+- Si peso o altura no son coherentes, omitirlos.
+- No incluir recomendaciones.
+- No explicar nada al paciente.
+- Estilo hospitalario profesional.
+- Estructura:
+    INFORME ECOCARDIOGRAMA DOPPLER COLOR
+    Datos del paciente
+    Ecocardiograma bidimensional
+    Doppler
+    Conclusión técnica breve
+
+Datos clínicos en JSON:
+{json.dumps(datos_clinicos, indent=2)}
+"""
+
+    response = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1
     )
 
-    doc.add_paragraph("")
+    informe = response.choices[0].message.content
+
+    # ---------------- WORD ----------------
+
+    doc = Document()
+    doc.add_paragraph(informe)
 
     # ---------------- IMÁGENES 4 FILAS x 2 COLUMNAS ----------------
-    doc.add_heading("REGISTRO DE IMÁGENES", level=2)
 
     pdf_bytes = pdf_file.read()
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -141,16 +142,12 @@ if excel_file and pdf_file:
                 )
                 idx += 1
 
-    doc.add_paragraph("")
-
     # ---------------- FIRMA ----------------
-    try:
+
+    if os.path.exists("firma.png"):
         doc.add_picture("firma.png", width=Inches(2))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    except:
-        pass
 
-    # ---------------- GUARDAR ----------------
     output = "Informe_Ecocardiograma.docx"
     doc.save(output)
 
