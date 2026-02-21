@@ -9,35 +9,33 @@ import io
 import os
 from groq import Groq
 
-# Configuración API
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-def extraer_datos_coordenadas(file):
+def extraer_datos_coordenadas_final(file):
     info = {"paciente": {}, "eco": {}, "doppler": []}
     try:
         xls = pd.ExcelFile(file)
-        df_eco = pd.read_excel(xls, "Ecodato", header=None)
+        df = pd.read_excel(xls, "Ecodato", header=None)
         
-        # Extracción por posición fija según el último Excel enviado
-        info["paciente"]["Nombre"] = str(df_eco.iloc[0, 1]).strip()
-        info["paciente"]["Fecha"] = str(df_eco.iloc[1, 1]).split(" ")[0]
+        # Coordenadas exactas según Mejor.xlsx
+        info["paciente"]["Nombre"] = str(df.iloc[0, 1]).strip() # Celda B1
+        info["paciente"]["Fecha"] = str(df.iloc[1, 1]).split(" ")[0] # Celda B2
         
-        # S/C está en la Columna E (4), Fila 11 (10)
+        # S/C está en Fila 11, Columna E (Índice 10, 4)
         try:
-            val_sc = df_eco.iloc[10, 4]
+            val_sc = df.iloc[10, 4]
             info["paciente"]["SC"] = f"{float(val_sc):.2f}" if pd.notnull(val_sc) else "N/A"
         except:
             info["paciente"]["SC"] = "N/A"
 
-        # Cavidades (Columna A y B)
-        mapeo = {"DDVD": "Ventrículo Derecho", "DDVI": "Diámetro Diastólico VI", 
-                 "DSVI": "Diámetro Sistólico VI", "FA": "Fracción de Acortamiento", 
-                 "DDSIV": "Septum", "DDPP": "Pared Posterior", "AAO": "Apertura Aórtica"}
+        # Cavidades (Siglas en Columna A, Valores en Columna B)
+        mapeo = {"DDVD": "VD", "DDVI": "DDVI", "DSVI": "DSVI", "FA": "FA", 
+                 "DDSIV": "Septum", "DDPP": "Pared Post.", "AAO": "Ao"}
         
-        for r in range(len(df_eco)):
-            sigla = str(df_eco.iloc[r, 0]).strip().upper()
+        for r in range(len(df)):
+            sigla = str(df.iloc[r, 0]).strip().upper()
             if sigla in mapeo:
-                info["eco"][mapeo[sigla]] = df_eco.iloc[r, 1]
+                info["eco"][mapeo[sigla]] = df.iloc[r, 1]
 
         # Doppler (Hoja Doppler)
         if "Doppler" in xls.sheet_names:
@@ -48,56 +46,58 @@ def extraer_datos_coordenadas(file):
                     if pd.notnull(df_dop.iloc[i, 1]):
                         info["doppler"].append(f"{v}: {df_dop.iloc[i, 1]} cm/s")
     except Exception as e:
-        st.error(f"Error técnico: {e}")
+        st.error(f"Error en lectura de celdas: {e}")
     return info
 
-def redactar_ia_medica_pura(info):
-    # Prompt ultra-seco para evitar el modo carta
+def redactar_ia_concisa(info):
     prompt = f"""
-    Eres un transcriptor médico. Genera un informe técnico basado en: {info['eco']} y {info['doppler']}.
+    Actúa como un cardiólogo redactando un informe técnico. 
+    DATOS: {info['eco']} | DOPPLER: {info['doppler']}
     
-    REGLAS DE ORO:
-    - Escribe el párrafo de 'HALLAZGOS' y el de 'CONCLUSIÓN'.
-    - NO escribas saludos, ni introducciones, ni "estimado", ni instrucciones.
-    - NO repitas datos del encabezado (Nombre, fecha, S/C).
-    - Usa un tono descriptivo, frío y profesional.
-    - Ejemplo: "Se observa dilatación del ventrículo izquierdo con DDVI de 61mm..."
+    ESTILO OBLIGATORIO:
+    - SIN introducciones. SIN frases como "se observa" o "el estudio muestra".
+    - Usa frases nominales cortas. 
+    - Ejemplo de formato: "Dilatación de cavidades izquierdas (DDVI 61mm). Deterioro sistólico moderado (FA 24%). Apertura valvular conservada."
+    - Separa en dos secciones: 'HALLAZGOS' y 'CONCLUSIÓN'.
+    - TODO EN MAYÚSCULAS.
     """
     res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}], temperature=0)
     return res.choices[0].message.content
 
-def generar_word_oficial(info, texto_ia, f_pdf):
+def generar_word_tecnico(info, texto_ia, f_pdf):
     doc = Document()
     
     # Encabezado
     tit = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
     tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Bloque de datos
-    p_datos = doc.add_paragraph()
-    p_datos.add_run("PACIENTE: ").bold = True
-    p_datos.add_run(f"{info['paciente']['Nombre']}\n")
-    p_datos.add_run("FECHA: ").bold = True
-    p_datos.add_run(f"{info['paciente']['Fecha']}\n")
-    p_datos.add_run("S/C: ").bold = True
-    p_datos.add_run(f"{info['paciente'].get('SC', 'N/A')} m²")
+    # Datos paciente
+    p = doc.add_paragraph()
+    p.add_run("PACIENTE: ").bold = True
+    p.add_run(f"{info['paciente']['Nombre']}\n")
+    p.add_run("FECHA: ").bold = True
+    p.add_run(f"{info['paciente']['Fecha']}\n")
+    p.add_run("S/C: ").bold = True
+    p.add_run(f"{info['paciente'].get('SC', 'N/A')} m²")
 
-    # Contenido (Justificado)
-    texto_limpio = texto_ia.replace("SECO, TÉCNICO, SIN SALUDOS.", "").strip()
-    partes = texto_limpio.upper().split("CONCLUSIÓN")
+    # Cuerpo del Informe (Justificado y técnico)
+    texto_ia = texto_ia.upper()
+    partes = texto_ia.split("CONCLUSIÓN")
 
-    doc.add_heading('Hallazgos', level=1)
-    h_p = doc.add_paragraph(partes[0].replace("HALLAZGOS:", "").strip())
+    doc.add_heading('HALLAZGOS', level=1)
+    h_txt = partes[0].replace("HALLAZGOS:", "").strip()
+    h_p = doc.add_paragraph(h_txt)
     h_p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     if len(partes) > 1:
-        doc.add_heading('Conclusión', level=1)
-        c_p = doc.add_paragraph(partes[1].replace(":", "").strip())
+        doc.add_heading('CONCLUSIÓN', level=1)
+        c_txt = partes[1].replace(":", "").strip()
+        c_p = doc.add_paragraph(c_txt)
         c_p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     # Imágenes
     doc.add_page_break()
-    doc.add_heading('Anexo de Imágenes', level=1)
+    doc.add_heading('ANEXO DE IMÁGENES', level=1)
     try:
         f_pdf.seek(0)
         pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
@@ -106,29 +106,30 @@ def generar_word_oficial(info, texto_ia, f_pdf):
             t = doc.add_table(rows=4, cols=2)
             for i in range(min(len(imgs), 8)):
                 run = t.rows[i//2].cells[i%2].paragraphs[0].add_run()
-                run.add_picture(imgs[i], width=Inches(2.6))
+                run.add_picture(imgs[i], width=Inches(2.5))
     except: pass
 
-    # Firma Profesional
-    doc.add_paragraph("\n\n\n\n")
+    # BLOQUE DE FIRMA (A la derecha)
+    for _ in range(5): doc.add_paragraph() # Espacio para el sello
     f_p = doc.add_paragraph()
     f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     f_p.add_run("__________________________\n").bold = True
-    f_p.add_run("Firma y Sello del Médico").bold = True
+    f_p.add_run("FIRMA Y SELLO DEL MÉDICO").bold = True
 
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     return buf
 
-# Streamlit App
-st.title("CardioReport Oficial 🩺")
-f_xl = st.file_uploader("Excel (Mejor.xlsx)", type=["xlsx"])
-f_pd = st.file_uploader("PDF (Imágenes)", type="pdf")
+# UI
+st.title("CardioReport 5.8 🩺")
+f_xl = st.file_uploader("Subir Mejor.xlsx", type=["xlsx"])
+f_pd = st.file_uploader("Subir PDF de Imágenes", type="pdf")
 
 if f_xl and f_pd:
-    if st.button("Generar Informe"):
-        data = extraer_datos_coordenadas(f_xl)
-        txt = redactar_ia_medica_pura(data)
-        word = generar_word_oficial(data, txt, f_pd)
-        st.download_button("Descargar Informe", word, f"Informe_{data['paciente']['Nombre']}.docx")
+    if st.button("Generar Informe Médico"):
+        data = extraer_datos_coordenadas_final(f_xl)
+        txt = redactar_ia_concisa(data)
+        word = generar_word_tecnico(data, txt, f_pd)
+        st.download_button("Descargar Informe Word", word, f"Informe_{data['paciente']['Nombre']}.docx")
+        
