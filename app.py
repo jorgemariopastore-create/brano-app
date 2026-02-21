@@ -5,8 +5,6 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml.ns import qn
-from docx.shared import RGBColor
 import fitz
 from io import BytesIO
 import os
@@ -18,32 +16,32 @@ st.title("Generador Profesional de Informe Ecocardiográfico")
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
 
-def limpio(valor):
-    if pd.isna(valor):
+def limpio(v):
+    if pd.isna(v):
         return None
-    valor = str(valor).strip()
-    if valor == "" or valor.lower() == "nan":
+    v = str(v).strip()
+    if v == "" or v.lower() == "nan":
         return None
-    return valor
+    return v
 
 if excel_file and pdf_file:
 
     eco = pd.read_excel(excel_file, sheet_name="Ecodato", header=None)
     doppler = pd.read_excel(excel_file, sheet_name="Doppler", header=None)
 
-    # ---------- DATOS PACIENTE ----------
+    # ---------------- DATOS CORRECTOS ----------------
     paciente = limpio(eco.iloc[0,1])
     fecha = limpio(eco.iloc[1,1])
-    peso = limpio(eco.iloc[12,1])
-    altura = limpio(eco.iloc[13,1])
 
-    # ---------- CREAR DOCUMENTO ----------
+    # Peso y altura correctos (los que están abajo)
+    peso = limpio(eco.iloc[14,1])
+    altura = limpio(eco.iloc[15,1])
+
+    # ---------------- CREAR DOCUMENTO ----------------
     doc = Document()
-
     style = doc.styles["Normal"]
-    font = style.font
-    font.name = "Calibri"
-    font.size = Pt(11)
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
 
     doc.add_heading("INFORME ECOCARDIOGRAMA DOPPLER COLOR", level=1)
 
@@ -58,59 +56,64 @@ if excel_file and pdf_file:
 
     doc.add_paragraph("")
 
-    # ---------- ECO 2D / MODO M ----------
-    doc.add_heading("ECOCARDIOGRAMA", level=2)
+    # ---------------- ECOCARDIOGRAMA ----------------
+    doc.add_heading("ECOCARDIOGRAMA BIDIMENSIONAL Y MODO M", level=2)
 
-    tabla_eco = eco.iloc[4:20, 0:3]
-    tabla_eco.columns = ["Parametro","Valor","Unidad"]
+    tabla = eco.iloc[4:14, 0:3]
+    tabla.columns = ["Parametro","Valor","Unidad"]
 
-    for _, row in tabla_eco.iterrows():
-        parametro = limpio(row["Parametro"])
-        valor = limpio(row["Valor"])
-        unidad = limpio(row["Unidad"])
+    datos = {}
+    for _, row in tabla.iterrows():
+        p = limpio(row["Parametro"])
+        v = limpio(row["Valor"])
+        u = limpio(row["Unidad"])
+        if p and v:
+            datos[p] = f"{v} {u}" if u else v
 
-        if parametro and valor:
-            if unidad:
-                doc.add_paragraph(f"{parametro}: {valor} {unidad}")
-            else:
-                doc.add_paragraph(f"{parametro}: {valor}")
+    # Cavidades
+    if "DDVI" in datos:
+        doc.add_paragraph(f"Diámetro diastólico VI: {datos['DDVI']}")
+    if "DSVI" in datos:
+        doc.add_paragraph(f"Diámetro sistólico VI: {datos['DSVI']}")
+    if "DDVD" in datos:
+        doc.add_paragraph(f"Diámetro VD: {datos['DDVD']}")
+    if "DDAI" in datos:
+        doc.add_paragraph(f"Aurícula izquierda: {datos['DDAI']}")
+    if "DRAO" in datos:
+        doc.add_paragraph(f"Raíz aórtica: {datos['DRAO']}")
+
+    # Función
+    if "FA" in datos:
+        doc.add_paragraph(f"Fracción de acortamiento: {datos['FA']}")
+    if "Masa" in datos:
+        doc.add_paragraph(f"Masa ventricular izquierda: {datos['Masa']}")
 
     doc.add_paragraph("")
 
-    # ---------- DOPPLER ----------
-    doc.add_heading("DOPPLER", level=2)
+    # ---------------- DOPPLER ----------------
+    doc.add_heading("DOPPLER COLOR", level=2)
 
-    doppler_tabla = doppler.iloc[2:10, 0:5]
-    doppler_tabla.columns = ["Valvula","Vel","GradP","GradM","Insuf"]
+    dop = doppler.iloc[2:8, 0:5]
+    dop.columns = ["Valvula","Vel","GradP","GradM","Insuf"]
 
-    for _, row in doppler_tabla.iterrows():
+    for _, row in dop.iterrows():
         valvula = limpio(row["Valvula"])
         vel = limpio(row["Vel"])
-        gradp = limpio(row["GradP"])
-        gradm = limpio(row["GradM"])
-        insuf = limpio(row["Insuf"])
-
-        if valvula:
-            linea = valvula
-
-            datos = []
-            if vel:
-                datos.append(f"Vel: {vel}")
-            if gradp:
-                datos.append(f"Grad Pico: {gradp}")
-            if gradm:
-                datos.append(f"Grad Medio: {gradm}")
-            if insuf:
-                datos.append(f"Insuf: {insuf}")
-
-            if datos:
-                linea += " – " + " | ".join(datos)
-
-            doc.add_paragraph(linea)
+        if valvula and vel:
+            doc.add_paragraph(f"{valvula}: velocidad máxima {vel}")
 
     doc.add_paragraph("")
 
-    # ---------- IMÁGENES 4x2 ----------
+    # ---------------- CONCLUSIÓN TÉCNICA ----------------
+    doc.add_heading("CONCLUSIÓN", level=2)
+    doc.add_paragraph(
+        "Estudio ecocardiográfico bidimensional y Doppler realizado. "
+        "Mediciones consignadas según valores obtenidos."
+    )
+
+    doc.add_paragraph("")
+
+    # ---------------- IMÁGENES 4 FILAS x 2 COLUMNAS ----------------
     doc.add_heading("REGISTRO DE IMÁGENES", level=2)
 
     pdf_bytes = pdf_file.read()
@@ -123,29 +126,31 @@ if excel_file and pdf_file:
             base = pdf_doc.extract_image(xref)
             imagenes.append(base["image"])
 
-    imagenes = imagenes[:8]  # máximo 8
+    imagenes = imagenes[:8]
 
-    table = doc.add_table(rows=2, cols=4)
+    table = doc.add_table(rows=4, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    index = 0
+    idx = 0
     for fila in table.rows:
         for celda in fila.cells:
-            if index < len(imagenes):
+            if idx < len(imagenes):
                 celda.paragraphs[0].add_run().add_picture(
-                    BytesIO(imagenes[index]),
-                    width=Inches(1.5)
+                    BytesIO(imagenes[idx]),
+                    width=Inches(2.5)
                 )
-                index += 1
+                idx += 1
 
     doc.add_paragraph("")
 
-    # ---------- FIRMA ----------
-    if os.path.exists("firma.png"):
-        firma = doc.add_picture("firma.png", width=Inches(2))
+    # ---------------- FIRMA ----------------
+    try:
+        doc.add_picture("firma.png", width=Inches(2))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    except:
+        pass
 
-    # ---------- GUARDAR ----------
+    # ---------------- GUARDAR ----------------
     output = "Informe_Ecocardiograma.docx"
     doc.save(output)
 
