@@ -9,123 +9,135 @@ import io
 import os
 from groq import Groq
 
-# 1. CONFIGURACIÓN DE PÁGINA Y SEGURIDAD
-st.set_page_config(page_title="Cardio-Report IA", layout="centered")
-
+# 1. CONEXIÓN
 try:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except Exception as e:
-    st.error("⚠️ Error: No se encontró la clave GROQ_API_KEY en los Secrets.")
+except:
+    st.error("Falta API Key")
     st.stop()
 
-def extraer_datos_limpios(file):
-    df = None
-    for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
-        try:
-            file.seek(0)
-            if file.name.endswith('.csv'):
-                df = pd.read_csv(file, sep=None, engine='python', encoding=encoding, header=None)
-            else:
-                df = pd.read_excel(file, header=None)
-            break
-        except:
-            continue
-    
-    if df is None or df.empty:
-        return {}
+# Mapeo de siglas para que la IA no invente "Frecuencias Cardíacas"
+DICCIONARIO_MEDICO = {
+    "DDVD": "Diámetro Diastólico del Ventrículo Derecho",
+    "DDVI": "Diámetro Diastólico del Ventrículo Izquierdo",
+    "DSVI": "Diámetro Sistólico del Ventrículo Izquierdo",
+    "FA": "Fracción de Acortamiento",
+    "ES": "Distancia Mitro-Septal (EPSS)",
+    "DDSIV": "Diámetro Diastólico del Septum Interventricular",
+    "DDPP": "Diámetro Diastólico de la Pared Posterior",
+    "DRAO": "Diámetro de la Raíz Aórtica",
+    "DDAI": "Diámetro de la Aurícula Izquierda",
+    "AAO": "Apertura Aórtica"
+}
 
+def extraer_datos_completos(f_eco, f_doppler):
+    """Extrae y combina datos de ambas hojas"""
     datos = {}
-    for _, row in df.iterrows():
-        k = str(row[0]).strip() if pd.notna(row[0]) else ""
-        v = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if k and k.lower() != "nan" and len(k) > 1:
-            datos[k] = v
+    
+    # Procesar Eco (Ecodato)
+    try:
+        df_eco = pd.read_csv(f_eco, header=None, encoding='latin-1')
+        for _, row in df_eco.iterrows():
+            k, v = str(row[0]).strip(), str(row[1]).strip()
+            if k and k != "nan": datos[k] = v
+    except: pass
+
+    # Procesar Doppler
+    try:
+        f_doppler.seek(0)
+        df_dop = pd.read_csv(f_doppler, header=None, encoding='latin-1')
+        # Buscamos las filas de válvulas (Tricúspide, Pulmonar, etc.)
+        for _, row in df_dop.iterrows():
+            valvula = str(row[0]).strip()
+            if valvula in ["Tricúspide", "Pulmonar", "Mitral", "Aórtica"]:
+                datos[f"Velocidad {valvula}"] = str(row[1])
+    except: pass
+    
     return datos
 
-def redactar_con_ia(datos_dict):
-    if not datos_dict:
-        return "No se detectaron datos."
-    
-    contexto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if v])
-    prompt = f"Actúa como cardiólogo. Redacta los hallazgos técnicos de este ecocardiograma de forma profesional y concisa. DATOS: {contexto}. REGLAS: Sin recomendaciones, sin tratamiento, solo descripción técnica."
-    
-    try:
-        completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant", # Modelo actualizado 2026
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        return completion.choices[0].message.content
-    except Exception as e:
-        return f"Error en IA: {str(e)}"
+def redactar_informe_ia(datos):
+    # Traducir siglas para el prompt
+    datos_expandidos = ""
+    for k, v in datos.items():
+        nombre = DICCIONARIO_MEDICO.get(k, k)
+        datos_expandidos += f"{nombre}: {v}\n"
 
-def generar_word(datos, texto_ia, pdf_file):
+    prompt = f"""
+    Eres un cardiólogo. Redacta el informe técnico basado en estos datos:
+    {datos_expandidos}
+    
+    REGLAS CRÍTICAS:
+    1. Usa los nombres completos (ej. 'Diámetro Diastólico...') NO uses siglas.
+    2. Compara con los valores normales. Si el DDVI es 61mm (normal hasta 56), descríbelo como aumentado.
+    3. Si la Fracción de Acortamiento (FA) es baja (24%), descríbelo como deterioro de la función sistólica.
+    4. NO des consejos de salud, ni hables de obesidad ni cambios de dieta.
+    5. NO menciones 'Frecuencia cardíaca' a menos que el dato diga 'FC'.
+    6. Sé puramente descriptivo y técnico.
+    """
+    
+    chat = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+    return chat.choices[0].message.content
+
+def generar_word(datos, texto_ia, f_pdf):
     doc = Document()
+    
+    # 1. ENCABEZADO CON DATOS GENERALES
     titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    nombre_p = datos.get('Paciente', 'BALEIRON MANUEL')
-    fecha_p = datos.get('Fecha de estudio', '27/12/2025')
+    table_hdr = doc.add_table(rows=3, cols=2)
+    table_hdr.cell(0,0).text = f"PACIENTE: {datos.get('Paciente', 'N/A')}"
+    table_hdr.cell(0,1).text = f"FECHA: 27/01/2026"
+    table_hdr.cell(1,0).text = f"PESO: {datos.get('Peso', 'N/A')} Kg"
+    table_hdr.cell(1,1).text = f"ALTURA: {datos.get('Altura', '150')} cm"
+    table_hdr.cell(2,0).text = f"S. CORPORAL: {datos.get('Sup. Corporal', 'N/A')} m²"
 
-    p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {nombre_p}\n").bold = True
-    p.add_run(f"FECHA: {fecha_p}").bold = True
-
+    # 2. CUERPO DEL INFORME
     doc.add_heading('Descripción Técnica', level=1)
     doc.add_paragraph(texto_ia)
 
-    # Anexo Imágenes 4x2
+    # 3. IMÁGENES
     doc.add_page_break()
     doc.add_heading('Anexo de Imágenes', level=1)
-    
     try:
-        pdf_file.seek(0)
-        pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        f_pdf.seek(0)
+        pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
         imgs = []
-        for page in pdf_doc:
-            for img_info in page.get_images(full=True):
-                imgs.append(io.BytesIO(pdf_doc.extract_image(img_info[0])["image"]))
-
+        for page in pdf:
+            for img in page.get_images():
+                imgs.append(io.BytesIO(pdf.extract_image(img[0])["image"]))
+        
         if imgs:
-            table = doc.add_table(rows=4, cols=2)
+            tabla_img = doc.add_table(rows=4, cols=2)
             for i in range(min(len(imgs), 8)):
-                row, col = i // 2, i % 2
-                cell = table.rows[row].cells[col]
-                run = cell.paragraphs[0].add_run()
-                run.add_picture(imgs[i], width=Inches(3.0))
-    except:
-        doc.add_paragraph("Imágenes no disponibles.")
+                run = tabla_img.rows[i//2].cells[i%2].paragraphs[0].add_run()
+                run.add_picture(imgs[i], width=Inches(2.8))
+    except: pass
 
-    # Firma
-    ruta_firma = "firma_doctor.png"
-    if os.path.exists(ruta_firma):
-        f_p = doc.add_paragraph("\n")
-        f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        f_p.add_run().add_picture(ruta_firma, width=Inches(1.8))
+    # 4. FIRMA (Asegurada al final)
+    if os.path.exists("firma_doctor.png"):
+        p_firma = doc.add_paragraph()
+        p_firma.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p_firma.add_run().add_picture("firma_doctor.png", width=Inches(2.0))
 
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out
 
-# --- INTERFAZ ---
-st.title("Cardio-Report IA 🩺")
-st.write("Sube los archivos para generar el informe editable.")
+# --- UI ---
+st.title("Generador Pro 🩺")
+f_eco = st.file_uploader("Subir Ecodato (CSV)", type="csv")
+f_dop = st.file_uploader("Subir Doppler (CSV)", type="csv")
+f_pdf = st.file_uploader("Subir PDF", type="pdf")
 
-col1, col2 = st.columns(2)
-with col1:
-    f_excel = st.file_uploader("Excel/CSV", type=["csv", "xlsx", "xls"])
-with col2:
-    f_pdf = st.file_uploader("PDF", type=["pdf"])
-
-if f_excel and f_pdf:
-    if st.button("🚀 Generar Informe"):
-        with st.spinner("Procesando..."):
-            datos_ext = extraer_datos_limpios(f_excel)
-            texto_final = redactar_con_ia(datos_ext)
-            docx_out = generar_word(datos_ext, texto_final, f_pdf)
-            
-            st.success("¡Informe listo!")
-            # Definimos el nombre para el archivo
-            nombre_archivo = datos_ext.get('Paciente', 'Informe').replace(" ", "_")
-            st.download_button("📥 Descargar Word", docx_out, f"Informe_{nombre_archivo}.docx")
+if f_eco and f_dop and f_pdf:
+    if st.button("Generar Informe"):
+        datos = extraer_datos_completos(f_eco, f_dop)
+        texto = redactar_informe_ia(datos)
+        word = generar_word(datos, texto, f_pdf)
+        st.download_button("Descargar Informe", word, "Informe_Final.docx")
