@@ -7,9 +7,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 import fitz
 from io import BytesIO
-from groq import Groq
 import json
 import os
+import requests
 
 st.set_page_config(page_title="Informe Ecocardiograma IA")
 st.title("Generador Profesional de Informe Ecocardiográfico")
@@ -37,7 +37,6 @@ if excel_file and pdf_file:
     eco = pd.read_excel(excel_file, sheet_name="Ecodato", header=None)
     doppler = pd.read_excel(excel_file, sheet_name="Doppler", header=None)
 
-    # DATOS GENERALES
     paciente = buscar_valor(eco, "Paciente")
     fecha = buscar_valor(eco, "Fecha")
     edad = buscar_valor(eco, "Edad")
@@ -45,34 +44,32 @@ if excel_file and pdf_file:
     peso = buscar_valor(eco, "Peso")
     altura = buscar_valor(eco, "Altura")
 
-    # MEDICIONES ECO
     mediciones = []
     tabla = eco.iloc[4:40, 0:3]
 
     for _, row in tabla.iterrows():
-        parametro = str(row[0]).strip()
-        valor = str(row[1]).strip()
-        unidad = str(row[2]).strip()
+        p = str(row[0]).strip()
+        v = str(row[1]).strip()
+        u = str(row[2]).strip()
 
-        if parametro.lower() != "nan" and valor.lower() != "nan":
+        if p.lower() != "nan" and v.lower() != "nan":
             mediciones.append({
-                "parametro": parametro,
-                "valor": valor,
-                "unidad": unidad if unidad.lower() != "nan" else ""
+                "parametro": p,
+                "valor": v,
+                "unidad": u if u.lower() != "nan" else ""
             })
 
-    # DOPPLER
     doppler_lista = []
     dop = doppler.iloc[2:25, 0:5]
 
     for _, row in dop.iterrows():
         valvula = str(row[0]).strip()
-        velocidad = str(row[1]).strip()
+        vel = str(row[1]).strip()
 
-        if valvula.lower() != "nan" and velocidad.lower() != "nan":
+        if valvula.lower() != "nan" and vel.lower() != "nan":
             doppler_lista.append({
                 "valvula": valvula,
-                "velocidad": velocidad
+                "velocidad": vel
             })
 
     datos_json = {
@@ -86,45 +83,53 @@ if excel_file and pdf_file:
         "doppler": doppler_lista
     }
 
-    # ---------------- IA GROQ ----------------
+    # ---------------- LLAMADA DIRECTA A GROQ ----------------
 
     try:
         api_key = st.secrets["GROQ_API_KEY"]
 
-        client = Groq(api_key=api_key)
-
         prompt = f"""
 Actúa como cardiólogo clínico.
-
 Redacta un INFORME ECOCARDIOGRAMA DOPPLER COLOR formal hospitalario.
 
 Reglas:
 - No inventar datos.
-- Si peso o altura no son coherentes, omitirlos.
 - No agregar recomendaciones.
 - No explicar al paciente.
-- No repetir JSON.
-- Usar solo los datos proporcionados.
-- Si falta un dato, simplemente omitirlo.
+- Si falta un dato, omitirlo.
+- Estructura profesional médica real.
 
 Datos:
 {json.dumps(datos_json, indent=2)}
 """
 
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[
-                {"role": "system", "content": "Eres un cardiologo experto en informes ecocardiograficos hospitalarios."},
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": "llama3-8b-8192",
+            "messages": [
+                {"role": "system", "content": "Eres un cardiologo experto en informes ecocardiograficos."},
                 {"role": "user", "content": prompt[:5000]}
             ],
-            temperature=0.1,
-            max_tokens=1200
+            "temperature": 0.1,
+            "max_tokens": 1200
+        }
+
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
         )
 
-        informe = response.choices[0].message.content
+        response.raise_for_status()
+        informe = response.json()["choices"][0]["message"]["content"]
 
     except Exception as e:
-        st.error(f"Error Groq: {str(e)}")
+        st.error(f"Error llamando a Groq API: {str(e)}")
         st.stop()
 
     # ---------------- CREAR WORD ----------------
@@ -132,7 +137,7 @@ Datos:
     doc = Document()
     doc.add_paragraph(informe)
 
-    # ---------------- IMÁGENES 4 FILAS x 2 COLUMNAS ----------------
+    # ---------------- IMÁGENES 4x2 ----------------
 
     pdf_bytes = pdf_file.read()
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -165,8 +170,6 @@ Datos:
     if os.path.exists("firma.png"):
         doc.add_picture("firma.png", width=Inches(2))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-
-    # ---------------- DESCARGA ----------------
 
     output = "Informe_Ecocardiograma.docx"
     doc.save(output)
