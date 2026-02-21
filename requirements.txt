@@ -1,11 +1,9 @@
 streamlit
 pandas
-python-docx
-pymupdf
-groq
 openpyxl
-xlrd==2.0.1
-lxml
+python-docx
+PyMuPDF
+Pillow
 
 
 
