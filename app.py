@@ -9,15 +9,15 @@ import fitz
 from io import BytesIO
 import json
 import os
-import requests
+from groq import Groq
 
 st.set_page_config(page_title="Informe Ecocardiograma IA")
 
-# ESTA LINEA ES PARA CONFIRMAR QUE ESTA VERSION ES NUEVA
-st.write("VERSION DEFINITIVA SIN GROQ SDK")
+st.title("Generador de Informe Ecocardiograma con IA")
 
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
+
 
 def buscar_valor(df, palabra):
     for i in range(len(df)):
@@ -29,6 +29,7 @@ def buscar_valor(df, palabra):
                     if valor and valor.lower() != "nan":
                         return valor.strip()
     return None
+
 
 if excel_file and pdf_file:
 
@@ -83,6 +84,7 @@ if excel_file and pdf_file:
 
     try:
         api_key = st.secrets["GROQ_API_KEY"]
+        client = Groq(api_key=api_key)
 
         prompt = f"""
 Actúa como cardiólogo clínico.
@@ -99,33 +101,20 @@ Datos:
 {json.dumps(datos_json, indent=2)}
 """
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": "llama3-8b-8192",
-            "messages": [
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
                 {"role": "system", "content": "Eres un cardiologo experto en informes ecocardiograficos."},
-                {"role": "user", "content": prompt[:5000]}
+                {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1,
-            "max_tokens": 1200
-        }
-
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60
+            temperature=0.1,
+            max_tokens=1200
         )
 
-        response.raise_for_status()
-        informe = response.json()["choices"][0]["message"]["content"]
+        informe = completion.choices[0].message.content
 
     except Exception as e:
-        st.error(f"Error API: {str(e)}")
+        st.error(f"Error API Groq: {str(e)}")
         st.stop()
 
     doc = Document()
