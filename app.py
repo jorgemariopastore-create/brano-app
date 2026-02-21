@@ -12,14 +12,12 @@ import json
 import os
 
 st.set_page_config(page_title="Informe Ecocardiograma IA")
-
-st.title("Generador Profesional de Informe Ecocardiográfico con IA")
+st.title("Generador Profesional de Informe Ecocardiográfico")
 
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
 
-
-# ---------------- FUNCION PARA BUSCAR VALORES POR ETIQUETA ----------------
+# ---------------- BUSCADOR UNIVERSAL ----------------
 
 def buscar_valor(df, palabra):
     for i in range(len(df)):
@@ -32,16 +30,14 @@ def buscar_valor(df, palabra):
                         return valor.strip()
     return None
 
+# ---------------- PROCESAMIENTO ----------------
 
 if excel_file and pdf_file:
-
-    # ---------------- LEER EXCEL ----------------
 
     eco = pd.read_excel(excel_file, sheet_name="Ecodato", header=None)
     doppler = pd.read_excel(excel_file, sheet_name="Doppler", header=None)
 
-    # ---------------- EXTRAER DATOS SEGUROS ----------------
-
+    # DATOS GENERALES
     paciente = buscar_valor(eco, "Paciente")
     fecha = buscar_valor(eco, "Fecha")
     edad = buscar_valor(eco, "Edad")
@@ -49,39 +45,37 @@ if excel_file and pdf_file:
     peso = buscar_valor(eco, "Peso")
     altura = buscar_valor(eco, "Altura")
 
-    # ---------------- EXTRAER MEDICIONES ECO ----------------
-
+    # MEDICIONES ECO
     mediciones = []
-    tabla = eco.iloc[4:25, 0:3]
+    tabla = eco.iloc[4:40, 0:3]
 
     for _, row in tabla.iterrows():
-        p = str(row[0]).strip()
-        v = str(row[1]).strip()
-        u = str(row[2]).strip()
+        parametro = str(row[0]).strip()
+        valor = str(row[1]).strip()
+        unidad = str(row[2]).strip()
 
-        if p and p.lower() != "nan" and v and v.lower() != "nan":
+        if parametro.lower() != "nan" and valor.lower() != "nan":
             mediciones.append({
-                "parametro": p,
-                "valor": v,
-                "unidad": u if u.lower() != "nan" else ""
+                "parametro": parametro,
+                "valor": valor,
+                "unidad": unidad if unidad.lower() != "nan" else ""
             })
 
-    # ---------------- EXTRAER DOPPLER ----------------
-
+    # DOPPLER
     doppler_lista = []
-    dop = doppler.iloc[2:15, 0:5]
+    dop = doppler.iloc[2:25, 0:5]
 
     for _, row in dop.iterrows():
         valvula = str(row[0]).strip()
-        vel = str(row[1]).strip()
+        velocidad = str(row[1]).strip()
 
-        if valvula and valvula.lower() != "nan" and vel and vel.lower() != "nan":
+        if valvula.lower() != "nan" and velocidad.lower() != "nan":
             doppler_lista.append({
                 "valvula": valvula,
-                "velocidad": vel
+                "velocidad": velocidad
             })
 
-    datos_clinicos = {
+    datos_json = {
         "paciente": paciente,
         "fecha": fecha,
         "edad": edad,
@@ -92,47 +86,45 @@ if excel_file and pdf_file:
         "doppler": doppler_lista
     }
 
-    # ---------------- GROQ IA ----------------
+    # ---------------- IA GROQ ----------------
 
     try:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        api_key = st.secrets["GROQ_API_KEY"]
+
+        client = Groq(api_key=api_key)
 
         prompt = f"""
-Actúa como cardiólogo.
+Actúa como cardiólogo clínico.
 
-Redacta un informe médico formal de ecocardiograma.
+Redacta un INFORME ECOCARDIOGRAMA DOPPLER COLOR formal hospitalario.
 
-Reglas estrictas:
-- No inventar ningún dato.
+Reglas:
+- No inventar datos.
 - Si peso o altura no son coherentes, omitirlos.
-- No incluir recomendaciones.
-- No explicar nada al paciente.
-- Estilo hospitalario profesional.
-- Estructura:
-    INFORME ECOCARDIOGRAMA DOPPLER COLOR
-    Datos del paciente
-    Ecocardiograma bidimensional
-    Doppler
-    Conclusión técnica breve
+- No agregar recomendaciones.
+- No explicar al paciente.
+- No repetir JSON.
+- Usar solo los datos proporcionados.
+- Si falta un dato, simplemente omitirlo.
 
-Datos clínicos en JSON:
-{json.dumps(datos_clinicos, indent=2)}
+Datos:
+{json.dumps(datos_json, indent=2)}
 """
 
         response = client.chat.completions.create(
             model="llama3-8b-8192",
             messages=[
-                {"role": "system", "content": "Eres un cardiologo que redacta informes medicos formales."},
-                {"role": "user", "content": prompt[:6000]}
+                {"role": "system", "content": "Eres un cardiologo experto en informes ecocardiograficos hospitalarios."},
+                {"role": "user", "content": prompt[:5000]}
             ],
             temperature=0.1,
-            max_tokens=1500
+            max_tokens=1200
         )
 
         informe = response.choices[0].message.content
 
     except Exception as e:
-        st.error("Error en Groq. Revisar API Key o tamaño del prompt.")
+        st.error(f"Error Groq: {str(e)}")
         st.stop()
 
     # ---------------- CREAR WORD ----------------
@@ -164,7 +156,7 @@ Datos clínicos en JSON:
                 if idx < len(imagenes):
                     celda.paragraphs[0].add_run().add_picture(
                         BytesIO(imagenes[idx]),
-                        width=Inches(2.5)
+                        width=Inches(2.4)
                     )
                     idx += 1
 
