@@ -13,10 +13,13 @@ import os
 
 st.set_page_config(page_title="Informe Ecocardiograma IA")
 
-st.title("Generador Profesional de Informe Ecocardiográfico")
+st.title("Generador Profesional de Informe Ecocardiográfico con IA")
 
 excel_file = st.file_uploader("Subir Excel", type=["xlsx"])
 pdf_file = st.file_uploader("Subir PDF con imágenes", type=["pdf"])
+
+
+# ---------------- FUNCION PARA BUSCAR VALORES POR ETIQUETA ----------------
 
 def buscar_valor(df, palabra):
     for i in range(len(df)):
@@ -24,10 +27,15 @@ def buscar_valor(df, palabra):
             celda = str(df.iloc[i, j])
             if palabra.lower() in celda.lower():
                 if j + 1 < len(df.columns):
-                    return str(df.iloc[i, j+1])
+                    valor = str(df.iloc[i, j + 1])
+                    if valor and valor.lower() != "nan":
+                        return valor.strip()
     return None
 
+
 if excel_file and pdf_file:
+
+    # ---------------- LEER EXCEL ----------------
 
     eco = pd.read_excel(excel_file, sheet_name="Ecodato", header=None)
     doppler = pd.read_excel(excel_file, sheet_name="Doppler", header=None)
@@ -41,28 +49,36 @@ if excel_file and pdf_file:
     peso = buscar_valor(eco, "Peso")
     altura = buscar_valor(eco, "Altura")
 
-    mediciones = []
+    # ---------------- EXTRAER MEDICIONES ECO ----------------
 
-    tabla = eco.iloc[4:20, 0:3]
+    mediciones = []
+    tabla = eco.iloc[4:25, 0:3]
+
     for _, row in tabla.iterrows():
-        p = str(row[0])
-        v = str(row[1])
-        u = str(row[2])
-        if p != "nan" and v != "nan":
+        p = str(row[0]).strip()
+        v = str(row[1]).strip()
+        u = str(row[2]).strip()
+
+        if p and p.lower() != "nan" and v and v.lower() != "nan":
             mediciones.append({
                 "parametro": p,
                 "valor": v,
-                "unidad": u
+                "unidad": u if u.lower() != "nan" else ""
             })
 
-    doppler_lista = []
+    # ---------------- EXTRAER DOPPLER ----------------
 
-    dop = doppler.iloc[2:10, 0:5]
+    doppler_lista = []
+    dop = doppler.iloc[2:15, 0:5]
+
     for _, row in dop.iterrows():
-        if str(row[0]) != "nan":
+        valvula = str(row[0]).strip()
+        vel = str(row[1]).strip()
+
+        if valvula and valvula.lower() != "nan" and vel and vel.lower() != "nan":
             doppler_lista.append({
-                "valvula": str(row[0]),
-                "velocidad": str(row[1])
+                "valvula": valvula,
+                "velocidad": vel
             })
 
     datos_clinicos = {
@@ -76,11 +92,12 @@ if excel_file and pdf_file:
         "doppler": doppler_lista
     }
 
-    # ---------------- GROQ ----------------
+    # ---------------- GROQ IA ----------------
 
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    try:
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-    prompt = f"""
+        prompt = f"""
 Actúa como cardiólogo.
 
 Redacta un informe médico formal de ecocardiograma.
@@ -102,15 +119,23 @@ Datos clínicos en JSON:
 {json.dumps(datos_clinicos, indent=2)}
 """
 
-    response = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1
-    )
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "Eres un cardiologo que redacta informes medicos formales."},
+                {"role": "user", "content": prompt[:6000]}
+            ],
+            temperature=0.1,
+            max_tokens=1500
+        )
 
-    informe = response.choices[0].message.content
+        informe = response.choices[0].message.content
 
-    # ---------------- WORD ----------------
+    except Exception as e:
+        st.error("Error en Groq. Revisar API Key o tamaño del prompt.")
+        st.stop()
+
+    # ---------------- CREAR WORD ----------------
 
     doc = Document()
     doc.add_paragraph(informe)
@@ -129,24 +154,27 @@ Datos clínicos en JSON:
 
     imagenes = imagenes[:8]
 
-    table = doc.add_table(rows=4, cols=2)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    if imagenes:
+        table = doc.add_table(rows=4, cols=2)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    idx = 0
-    for fila in table.rows:
-        for celda in fila.cells:
-            if idx < len(imagenes):
-                celda.paragraphs[0].add_run().add_picture(
-                    BytesIO(imagenes[idx]),
-                    width=Inches(2.5)
-                )
-                idx += 1
+        idx = 0
+        for fila in table.rows:
+            for celda in fila.cells:
+                if idx < len(imagenes):
+                    celda.paragraphs[0].add_run().add_picture(
+                        BytesIO(imagenes[idx]),
+                        width=Inches(2.5)
+                    )
+                    idx += 1
 
     # ---------------- FIRMA ----------------
 
     if os.path.exists("firma.png"):
         doc.add_picture("firma.png", width=Inches(2))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # ---------------- DESCARGA ----------------
 
     output = "Informe_Ecocardiograma.docx"
     doc.save(output)
