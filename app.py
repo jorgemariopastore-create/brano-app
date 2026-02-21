@@ -6,188 +6,139 @@ from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import fitz
 import io
-import os
 from groq import Groq
 
-# Inicialización segura de cliente
+# Configuración del Cliente
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-def get_value_safe(df, row, col, default="N/A"):
-    """Extrae valor de celda manejando nulos y errores de índice."""
-    try:
-        val = df.iloc[row, col]
-        if pd.isna(val) or str(val).strip().lower() in ['nan', '']:
-            return default
-        return str(val).strip()
-    except:
-        return default
-
-def extraer_datos_senior(file):
+def extraer_datos_quirurgico(file):
     info = {"paciente": {}, "eco": {}, "doppler": []}
     try:
         xls = pd.ExcelFile(file)
-        df_eco = pd.read_excel(xls, "Ecodato", header=None)
+        # Cargamos la hoja de datos tal cual
+        df = pd.read_excel(xls, "Ecodato", header=None)
         
-        # 1. Extracción de Cabecera (Baleiron, Fecha, etc.)
-        # Buscamos 'Paciente' y 'Fecha' en las primeras filas por si se desplazan
-        info["paciente"]["Nombre"] = get_value_safe(df_eco, 0, 1)
-        info["paciente"]["Fecha"] = get_value_safe(df_eco, 1, 1).split(' ')[0]
+        # 1. Cabecera - Coordenadas Fijas (B1 y B2)
+        info["paciente"]["Nombre"] = str(df.iloc[0, 1]).strip()
+        info["paciente"]["Fecha"] = str(df.iloc[1, 1]).split(" ")[0]
         
-        # 2. Superficie Corporal (S/C) - Búsqueda Dinámica en la fila 11 o 12
-        sc_val = "N/A"
-        for r in range(8, 15): # Rango de seguridad donde suele estar S/C
-            fila_str = " ".join(map(str, df_eco.iloc[r].values)).lower()
-            if "masa" in fila_str or "dubois" in fila_str or "sup." in fila_str:
-                # El valor suele estar en la columna E (4)
-                potential_val = df_eco.iloc[r, 4]
-                if pd.notnull(potential_val) and isinstance(potential_val, (int, float)):
-                    sc_val = f"{float(potential_val):.2f}"
-                    break
-        info["paciente"]["SC"] = sc_val
+        # 2. S/C - Coordenada Fija E11 (Índice 10, 4)
+        val_sc = df.iloc[10, 4]
+        info["paciente"]["SC"] = f"{float(val_sc):.2f}" if pd.notnull(val_sc) else "N/A"
 
-        # 3. Mediciones de Cavidades (Mapeo por siglas en Columna A)
-        claves = {
-            "DDVI": "Diámetro Diastólico VI",
-            "DSVI": "Diámetro Sistólico VI",
-            "FA": "Fracción de Acortamiento",
-            "DDVD": "Ventrículo Derecho",
-            "DDAI": "Aurícula Izquierda",
-            "DDSIV": "Septum",
-            "DDPP": "Pared Posterior"
-        }
-        for r in range(len(df_eco)):
-            etiqueta = str(df_eco.iloc[r, 0]).strip().upper()
-            if etiqueta in claves:
-                val = df_eco.iloc[r, 1]
-                info["eco"][claves[etiqueta]] = f"{val:.1f}" if isinstance(val, (int, float)) else str(val)
+        # 3. Mediciones (Extracción directa por filas conocidas)
+        # Mapeamos los valores de la columna B según la etiqueta en columna A
+        mediciones = {}
+        for r in range(len(df)):
+            label = str(df.iloc[r, 0]).strip().upper()
+            val = df.iloc[r, 1]
+            if label in ["DDVI", "DSVI", "FA", "DDVD", "DDAI", "DDSIV", "DDPP", "AAO"]:
+                mediciones[label] = str(val)
+        info["eco"] = mediciones
 
         # 4. Doppler (Hoja Doppler)
         if "Doppler" in xls.sheet_names:
-            df_dop = pd.read_excel(xls, "Doppler")
-            # Limpiamos nombres de columnas para evitar errores de espacios
-            df_dop.columns = [str(c).strip() for c in df_dop.columns]
-            for _, row in df_dop.iterrows():
-                valvula = str(row.iloc[0])
-                velocidad = str(row.iloc[1])
-                if any(v in valvula for v in ["Tric", "Pulm", "Mit", "Aór"]) and velocidad != "nan":
-                    info["doppler"].append(f"{valvula}: {velocidad} cm/seg")
-
+            df_dop = pd.read_excel(xls, "Doppler", header=None)
+            for i in range(len(df_dop)):
+                v = str(df_dop.iloc[i, 0])
+                vel = str(df_dop.iloc[i, 1])
+                if any(x in v for x in ["Tric", "Pulm", "Mit", "Aór"]) and vel != "nan":
+                    info["doppler"].append(f"{v}: {vel} CM/S")
     except Exception as e:
-        st.error(f"Error crítico de lectura: {e}")
+        st.error(f"Error en extracción Senior: {e}")
     return info
 
-def redactar_ia_senior(info):
-    if not info["eco"]: return "DATOS INSUFICIENTES PARA HALLAZGOS."
-    
-    # Prompt de Ingeniería: Forzamos el rol de experto y eliminamos la "creatividad" de la IA
+def redactar_ia_senior_estricta(info):
+    # Prompt diseñado para eliminar la "creatividad" y las sugerencias
     prompt = f"""
-    ESTABLECE UN TONO MÉDICO FORMAL Y CONCISO. 
-    DATOS DEL ECOCARDIOGRAMA: {info['eco']}
+    ERES UN TRANSCRIPTOR MÉDICO. GENERA UN INFORME ECOCARDIOGRÁFICO BASADO EN ESTOS DATOS:
+    CAVIDADES: {info['eco']}
     DOPPLER: {info['doppler']}
     
-    TAREA: Escribe los 'HALLAZGOS' y la 'CONCLUSIÓN'.
-    REQUISITOS:
-    - TODO EL TEXTO EN MAYÚSCULAS.
-    - SIN INTRODUCCIONES NI DESPEDIDAS.
-    - USA TERMINOLOGÍA TÉCNICA (EJ. 'DILATACIÓN VENTRICULAR', 'FUNCIÓN PRESERVADA').
-    - SI DDVI > 56 MM, ES DILATACIÓN. SI FA < 27%, ES DISFUNCIÓN SISTÓLICA.
+    ESTRUCTURA OBLIGATORIA:
+    1. 'HALLAZGOS': DESCRIBE LAS DIMENSIONES DE LAS CAVIDADES Y LUEGO LOS HALLAZGOS DEL DOPPLER.
+    2. 'CONCLUSIÓN': RESUMEN TÉCNICO DEL DIAGNÓSTICO.
+    
+    PROHIBICIONES:
+    - NO SUGERIR TRATAMIENTOS NI PRUEBAS ADICIONALES.
+    - NO USAR LA PALABRA 'SUGIERE' O 'RECOMIENDA'.
+    - NO USAR SALUDOS NI INTRODUCCIONES.
+    - TODO EL TEXTO DEBE ESTAR EN MAYÚSCULAS.
     """
-    try:
-        res = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": "Eres un cardiólogo experto redactando informes para colegas."},
-                      {"role": "user", "content": prompt}],
-            temperature=0.1
-        )
-        return res.choices[0].message.content
-    except:
-        return "ERROR EN PROCESAMIENTO CLÍNICO."
+    res = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+    return res.choices[0].message.content
 
-def generar_doc_senior(info, texto_ia, f_pdf):
+def generar_word_senior_final(info, texto_ia, f_pdf):
     doc = Document()
     
-    # Configuración de márgenes y estilo
-    section = doc.sections[0]
-    section.left_margin = Inches(1)
+    # Título Principal
+    tit = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
+    tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Título
-    h = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
-    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # Cuadro de Datos (Encabezado limpio)
-    p = doc.add_paragraph()
-    p.add_run("PACIENTE: ").bold = True
-    p.add_run(f"{info['paciente']['Nombre']}\n")
-    p.add_run("FECHA: ").bold = True
-    p.add_run(f"{info['paciente']['Fecha']}\n")
-    p.add_run("S/C: ").bold = True
-    p.add_run(f"{info['paciente']['SC']} m²")
+    # Datos del Paciente
+    p_cab = doc.add_paragraph()
+    p_cab.add_run("PACIENTE: ").bold = True
+    p_cab.add_run(f"{info['paciente']['Nombre']}\n")
+    p_cab.add_run("FECHA: ").bold = True
+    p_cab.add_run(f"{info['paciente']['Fecha']}\n")
+    p_cab.add_run("S/C: ").bold = True
+    p_cab.add_run(f"{info['paciente']['SC']} m²")
 
-    # Contenido Médico (Justificado)
-    texto_ia = texto_ia.upper()
-    secciones = texto_ia.split("CONCLUSIÓN")
+    # Cuerpo del Informe
+    partes = texto_ia.upper().split("CONCLUSIÓN")
     
     doc.add_heading('HALLAZGOS', level=1)
-    para_h = doc.add_paragraph(secciones[0].replace("HALLAZGOS:", "").strip())
-    para_h.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    
-    if len(secciones) > 1:
-        doc.add_heading('CONCLUSIÓN', level=1)
-        para_c = doc.add_paragraph(secciones[1].replace(":", "").strip())
-        para_c.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    h_para = doc.add_paragraph(partes[0].replace("HALLAZGOS:", "").strip())
+    h_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
-    # Imágenes (Optimizado)
+    if len(partes) > 1:
+        doc.add_heading('CONCLUSIÓN', level=1)
+        c_para = doc.add_paragraph(partes[1].replace(":", "").strip())
+        c_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    # Imágenes
     if f_pdf:
+        doc.add_page_break()
+        doc.add_heading('ANEXO DE IMÁGENES', level=1)
         try:
-            doc.add_page_break()
-            doc.add_heading('ANEXO DE IMÁGENES', level=1)
             f_pdf.seek(0)
             pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
             table = doc.add_table(rows=0, cols=2)
-            imgs = []
             for page in pdf:
-                for img in page.get_images():
-                    imgs.append(io.BytesIO(pdf.extract_image(img[0])["image"]))
-            
-            for i in range(0, min(len(imgs), 6), 2):
-                row_cells = table.add_row().cells
-                for j in range(2):
-                    if i + j < len(imgs):
-                        p = row_cells[j].paragraphs[0]
-                        p.add_run().add_picture(imgs[i+j], width=Inches(2.8))
+                for img_info in page.get_images():
+                    img_data = io.BytesIO(pdf.extract_image(img_info[0])["image"])
+                    row_cells = table.add_row().cells
+                    row_cells[0].paragraphs[0].add_run().add_picture(img_data, width=Inches(2.5))
         except: pass
 
-    # FIRMA (Solución Definitiva)
-    # Se agrega una tabla invisible para anclar la firma a la derecha
+    # BLOQUE DE FIRMA (ESTILO SENIOR: TABLA DE POSICIONAMIENTO)
     doc.add_paragraph("\n\n\n")
-    table_firma = doc.add_table(rows=1, cols=2)
-    table_firma.columns[0].width = Inches(4)
-    celda_firma = table_firma.rows[0].cells[1]
+    table_f = doc.add_table(rows=1, cols=2)
+    table_f.columns[0].width = Inches(4.5) # Espacio vacío a la izquierda
+    celda_firma = table_f.rows[0].cells[1]
     
-    p_firma = celda_firma.paragraphs[0]
-    p_firma.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_firma.add_run("__________________________\n").bold = True
-    p_firma.add_run("FIRMA Y SELLO DEL MÉDICO").bold = True
+    f_p = celda_firma.paragraphs[0]
+    f_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    f_p.add_run("__________________________\n").bold = True
+    f_p.add_run("FIRMA Y SELLO DEL MÉDICO").bold = True
 
-    output = io.BytesIO()
-    doc.save(output)
-    output.seek(0)
-    return output
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
-# --- INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="CardioReport Senior", layout="centered")
-st.title("CardioReport Senior 🩺")
+# Streamlit UI
+st.title("CardioReport Senior V8 🩺")
+f_xl = st.file_uploader("Subir Mejor.xlsx", type=["xlsx"])
+f_pd = st.file_uploader("Subir Imágenes PDF", type="pdf")
 
-xl = st.file_uploader("Excel Médico", type="xlsx")
-pd_file = st.file_uploader("PDF Imágenes", type="pdf")
-
-if xl and pd_file:
-    if st.button("GENERAR INFORME MÉDICO"):
-        with st.spinner("Ejecutando lógica de extracción..."):
-            datos = extraer_datos_senior(xl)
-            texto = redactar_ia_senior(datos)
-            doc_final = generar_doc_senior(datos, texto, pd_file)
-            
-            st.success(f"Informe de {datos['paciente']['Nombre']} listo.")
-            st.download_button("📥 Descargar Informe Word", doc_final, 
-                             file_name=f"Informe_{datos['paciente']['Nombre']}.docx")
+if f_xl and f_pd:
+    if st.button("GENERAR INFORME PROFESIONAL"):
+        datos = extraer_datos_quirurgico(f_xl)
+        texto = redactar_ia_senior_estricta(datos)
+        word = generar_word_senior_final(datos, texto, f_pd)
+        st.download_button("📥 Descargar Informe", word, f"Informe_{datos['paciente']['Nombre']}.docx")
