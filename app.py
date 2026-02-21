@@ -19,41 +19,35 @@ except Exception as e:
     st.stop()
 
 def extraer_datos_completos(file):
-    """Lee todas las hojas del Excel para no perder datos de Doppler"""
+    """Extrae datos de todas las hojas y normaliza claves"""
     datos = {}
     try:
-        # Leemos todas las hojas del Excel
         dict_dfs = pd.read_excel(file, sheet_name=None, header=None)
-        
-        for nombre_hoja, df in dict_dfs.items():
+        for _, df in dict_dfs.items():
             for _, row in df.iterrows():
                 if len(row) >= 2:
-                    key = str(row[0]).strip()
+                    key = str(row[0]).strip().replace(":", "")
                     val = str(row[1]).strip() if pd.notna(row[1]) else ""
                     if key and key.lower() != "nan":
                         datos[key] = val
         return datos
     except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
+        st.error(f"Error al leer el Excel: {e}")
         return None
 
 def redactar_informe_ia(datos_dict):
-    """Pide a la IA una redacción médica narrativa y dividida"""
+    """Redacción al estilo del informe médico real suministrado"""
     datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items()])
     
     prompt = f"""
-    Eres un médico cardiólogo experto. Tu tarea es redactar un informe profesional basado en estos datos:
-    {datos_texto}
-
-    ESTRUCTURA OBLIGATORIA:
-    1. Sección 'ECOCARDIOGRAMA 2D': Describe diámetros, espesores y función sistólica de forma narrativa.
-    2. Sección 'DOPPLER CARDIACO': Describe flujos valvulares y hallazgos hemodinámicos.
+    Eres un cardiólogo redactando un informe profesional. Usa estos datos: {datos_texto}
     
-    REGLAS:
-    - NO hagas listas de puntos. Redacta párrafos médicos fluidos.
-    - NO incluyas recomendaciones ni consejos.
-    - Usa terminología técnica (ej. 'Fracción de eyección conservada', 'Raíz aórtica de diámetros normales').
-    - Si hay observaciones en los datos, inclúyelas de forma coherente.
+    ESTILO DEL INFORME:
+    1. Divide en dos secciones: 'ECOCARDIOGRAMA 2D' y 'DOPPLER CARDÍACO'.
+    2. Usa una lista numerada para cada hallazgo (1., 2., 3...).
+    3. NO repitas el nombre del paciente ni la fecha en el texto.
+    4. Usa lenguaje extremadamente técnico y conciso (ej: 'Hipocinesia global severa', 'Hipertrofia excéntrica').
+    5. No incluyas recomendaciones ni conclusiones subjetivas.
     """
     
     try:
@@ -63,36 +57,44 @@ def redactar_informe_ia(datos_dict):
             temperature=0.1
         )
         return completion.choices[0].message.content
-    except Exception:
-        return "Error en la redacción de la IA."
+    except:
+        return "Error en la redacción."
 
 def generar_word_mejorado(datos, cuerpo_texto, pdf_file, firma_path):
     doc = Document()
     
-    # Encabezado principal
+    # 1. TÍTULO
     titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO Y DOPPLER COLOR', 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Bloque de datos del paciente (Encabezado detallado)
-    table_info = doc.add_table(rows=3, cols=2)
-    table_info.autofit = True
+    # 2. ENCABEZADO (Datos del Paciente)
+    # Intentamos buscar variantes de nombres de columnas
+    nombre = datos.get('Paciente', datos.get('Nombre', 'N/A'))
+    fecha = datos.get('Fecha de estudio', datos.get('Fecha', 'N/A'))
+    peso = datos.get('Peso', 'N/A')
+    altura = datos.get('Altura', 'N/A')
+    sc = datos.get('Superficie Corporal', datos.get('SC', 'N/A'))
+    edad = datos.get('Edad', 'N/A')
+
+    p_header = doc.add_paragraph()
+    p_header.add_run(f"PACIENTE: {nombre}").bold = True
+    p_header.add_run(f"\t\tFECHA: {fecha}").bold = True
     
-    # Fila 1
-    table_info.cell(0,0).text = f"PACIENTE: {datos.get('Paciente', 'N/A')}"
-    table_info.cell(0,1).text = f"FECHA: {datos.get('Fecha de estudio', 'N/A')}"
-    # Fila 2
-    table_info.cell(1,0).text = f"PESO: {datos.get('Peso', 'N/A')} kg"
-    table_info.cell(1,1).text = f"ALTURA: {datos.get('Altura', 'N/A')} cm"
-    # Fila 3
-    table_info.cell(2,0).text = f"S. CORPORAL: {datos.get('Superficie Corporal', 'N/A')} m²"
-    table_info.cell(2,1).text = f"EDAD: {datos.get('Edad', 'N/A')}"
+    p_antropo = doc.add_paragraph()
+    p_antropo.add_run(f"PESO: {peso} kg  |  ALTURA: {altura} cm  |  S.C: {sc} m²  |  EDAD: {edad}")
+    
+    doc.add_paragraph("_" * 50) # Línea divisoria
 
-    doc.add_paragraph("\n") # Espacio
+    # 3. CUERPO DEL INFORME (Justificado)
+    for linea in cuerpo_texto.split('\n'):
+        if linea.strip():
+            p = doc.add_paragraph(linea)
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # JUSTIFICADO
+            # Si es un título de sección, ponerlo en negrita
+            if "ECOCARDIOGRAMA 2D" in linea or "DOPPLER CARDÍACO" in linea:
+                for run in p.runs: run.bold = True
 
-    # Cuerpo redactado por la IA
-    doc.add_paragraph(cuerpo_texto)
-
-    # Anexo de Imágenes (4x2)
+    # 4. ANEXO DE IMÁGENES (4x2)
     doc.add_page_break()
     doc.add_heading('ANEXO DE IMÁGENES', level=1)
     
@@ -114,7 +116,7 @@ def generar_word_mejorado(datos, cuerpo_texto, pdf_file, firma_path):
     except:
         pass
 
-    # FIRMA DIGITAL
+    # 5. FIRMA (Al final a la derecha)
     if os.path.exists(firma_path):
         doc.add_paragraph("\n\n")
         f_para = doc.add_paragraph()
@@ -127,7 +129,7 @@ def generar_word_mejorado(datos, cuerpo_texto, pdf_file, firma_path):
     return buffer
 
 # INTERFAZ STREAMLIT
-st.title("🩺 Generador de Informes Cardiológicos Avanzado")
+st.title("🩺 Generador de Informes Médicos")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -136,13 +138,13 @@ with col2:
     f_pdf = st.file_uploader("Subir PDF de Sonoscape", type=["pdf"])
 
 if f_data and f_pdf:
-    if st.button("🚀 Generar Informe Profesional"):
-        with st.spinner("Procesando todas las hojas y redactando informe..."):
+    if st.button("🚀 Generar Informe con Estilo Médico"):
+        with st.spinner("Procesando y justificando texto..."):
             dict_datos = extraer_datos_completos(f_data)
             texto_ia = redactar_informe_ia(dict_datos)
             docx_out = generar_word_mejorado(dict_datos, texto_ia, f_pdf, "firma_doctor.png")
             
-            st.success("Informe redactado con éxito.")
-            st.download_button("📥 Descargar Word", docx_out, 
+            st.success("Informe listo.")
+            st.download_button("📥 Descargar Word Editable", docx_out, 
                                f"Informe_{dict_datos.get('Paciente','Estudio')}.docx",
                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
