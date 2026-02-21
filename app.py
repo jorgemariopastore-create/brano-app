@@ -1,161 +1,151 @@
 
 import streamlit as st
+import pandas as pd
 from docx import Document
-from docx.shared import Pt, Inches, Cm
+from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+import fitz  # PyMuPDF
 import io
 import os
-import re
-import PyPDF2
-from datetime import datetime
+from groq import Groq
 
-# --- EXTRACCIÓN MEJORADA ---
-def extraer_datos_pdf(file):
-    datos = {"pac": "", "fec": datetime.now(), "peso": ""}
-    if file:
-        try:
-            reader = PyPDF2.PdfReader(file)
-            texto = "".join([p.extract_text() for p in reader.pages])
-            m_pac = re.search(r"Paciente[:\s]+([a-zA-Z\s]+)", texto)
-            if m_pac: datos["pac"] = m_pac.group(1).strip().upper()
-            m_fec = re.search(r"(\d{2}/\d{2}/\d{4})", texto)
-            if m_fec: datos["fec"] = datetime.strptime(m_fec.group(1), "%d/%m/%Y")
-        except: pass
-    return datos
+# --- CONFIGURACIÓN DE PÁGINA Y API ---
+st.set_page_config(page_title="Generador Cardio-IA", layout="wide")
 
-# --- GENERADOR DE INFORME REDACTADO ---
-def generar_word_profesional(d):
-    doc = Document()
-    style = doc.styles['Normal']
-    style.font.name = 'Arial'
-    style.font.size = Pt(11)
+# Conexión con Groq usando Secrets
+try:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except Exception as e:
+    st.error("No se encontró 'GROQ_API_KEY' en los Secrets de Streamlit.")
+    st.stop()
 
-    # Encabezado centrado
-    titulo = doc.add_paragraph()
-    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_t = titulo.add_run("INFORME DE ECOCARDIOGRAMA DOPPLER COLOR")
-    run_t.bold = True
-    run_t.size = Pt(14)
+def extraer_datos(file):
+    """Lee el archivo CSV o Excel y limpia los datos"""
+    try:
+        if file.name.endswith('.csv'):
+            # Para CSVs como los de Sonoscape
+            df = pd.read_csv(file, header=None)
+        else:
+            df = pd.read_excel(file, header=None)
+        
+        datos = {}
+        for _, row in df.iterrows():
+            key = str(row[0]).strip()
+            val = str(row[1]).strip() if pd.notna(row[1]) else ""
+            if key and key != "nan":
+                datos[key] = val
+        return datos
+    except Exception as e:
+        st.error(f"Error al leer el archivo de datos: {e}")
+        return None
 
-    # Filiación
-    filiacion = doc.add_paragraph()
-    filiacion.add_run(f"PACIENTE: {d['pac']}\n").bold = True
-    filiacion.add_run(f"FECHA: {d['fec_str']}  |  PESO: {d['peso']} kg  |  ALTURA: {d['alt']} cm\n")
-    doc.add_paragraph("_" * 85)
-
-    # CUERPO DEL INFORME (Redacción Médica)
-    doc.add_paragraph("HALLAZGOS ECOCARDIOGRÁFICOS:").bold = True
+def redactar_informe_ia(datos_dict):
+    """Groq redacta el informe técnico sin dar recomendaciones"""
+    # Convertimos los datos a texto para la IA
+    datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items()])
     
-    texto_estructural = (
-        f"Se observa ventrículo izquierdo con diámetro diastólico de {d['ddvi']} mm y sistólico de {d['dsvi']} mm. "
-        f"La fracción de acortamiento se calcula en {d['fa']}%, con una excursión sistólica del anillo tricúspideo (ES) de {d['es']} mm. "
-        f"El espesor del septum interventricular (SIV) es de {d['siv']} mm y la pared posterior (PP) de {d['pp']} mm. "
-        f"La raíz aórtica mide {d['drao']} mm, la aurícula izquierda {d['ai']} mm y la aorta ascendente {d['aao']} mm. "
-        f"El diámetro del ventrículo derecho (DDVD) es de {d['ddvd']} mm."
+    prompt = f"""
+    Eres un cardiólogo redactando un informe profesional. 
+    Usa estos datos de ecocardiografía y doppler: 
+    {datos_texto}
+    
+    INSTRUCCIONES:
+    1. Redacta de forma técnica, profesional y fluida.
+    2. NO incluyas recomendaciones de tratamiento ni pasos a seguir.
+    3. NO incluyas consejos de salud.
+    4. Si hay una fila llamada 'Observaciones', incluye ese texto en el cuerpo del informe.
+    5. No inventes datos; solo usa lo proporcionado.
+    """
+    
+    completion = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0, # Determinismo máximo
     )
-    p1 = doc.add_paragraph(texto_estructural)
-    p1.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    return completion.choices[0].message.content
 
-    doc.add_paragraph("\nESTUDIO DOPPLER HEMODINÁMICO:").bold = True
+def generar_word(datos, cuerpo_texto, pdf_file, firma_path):
+    """Crea el documento Word con texto e imágenes en 4x2"""
+    doc = Document()
     
-    doppler_intro = "Al análisis Doppler color y espectral, se registran los siguientes parámetros transvalvulares:"
-    doc.add_paragraph(doppler_intro)
-
-    # Tabla Doppler Estilizada
-    t2 = doc.add_table(rows=5, cols=5)
-    t2.style = 'Table Grid'
-    h = ["Válvula", "Veloc. (cm/s)", "Grad. Pico", "Grad. Medio", "Insuficiencia"]
-    for i, txt in enumerate(h): t2.cell(0,i).text = txt
+    # Encabezado
+    titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO Y DOPPLER COLOR', 0)
+    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    valvs = [
-        ("Tricúspide", d['v_tri'], d['gp_tri'], d['gm_tri'], d['i_tri']),
-        ("Pulmonar", d['v_pul'], d['gp_pul'], d['gm_pul'], d['i_pul']),
-        ("Mitral", d['v_mit'], d['gp_mit'], d['gm_mit'], d['i_mit']),
-        ("Aórtica", d['v_ao'], d['gp_ao'], d['gm_ao'], d['i_ao'])
-    ]
-    for i, (n, v, gp, gm, ins) in enumerate(valvs, start=1):
-        t2.cell(i,0).text = n
-        t2.cell(i,1).text = v
-        t2.cell(i,2).text = gp
-        t2.cell(i,3).text = gm
-        t2.cell(i,4).text = ins
+    # Información del Paciente
+    p = doc.add_paragraph()
+    p.add_run("PACIENTE: ").bold = True
+    # Intenta buscar 'Paciente' en los datos, si no usa un valor genérico
+    nombre = datos.get('Paciente', 'BALEIRON MANUEL')
+    p.add_run(f"{nombre}\n")
+    p.add_run("FECHA DE ESTUDIO: ").bold = True
+    p.add_run(f"{datos.get('Fecha de estudio', 'N/A')}")
 
-    # Conclusión
-    if d['conclu']:
-        doc.add_paragraph("\nCONCLUSIÓN:").bold = True
-        p_c = doc.add_paragraph(d['conclu'])
-        p_c.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    # Cuerpo del Informe (IA)
+    doc.add_heading('Descripción de Hallazgos', level=1)
+    doc.add_paragraph(cuerpo_texto)
+
+    # Anexo de Imágenes (4 filas x 2 columnas)
+    doc.add_page_break()
+    doc.add_heading('Anexo de Imágenes', level=1)
+    
+    pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    img_streams = []
+    for page in pdf_doc:
+        for img_info in page.get_images(full=True):
+            img_streams.append(io.BytesIO(pdf_doc.extract_image(img_info[0])["image"]))
+
+    if img_streams:
+        # Tabla de 4 filas x 2 columnas
+        table = doc.add_table(rows=4, cols=2)
+        for i in range(min(len(img_streams), 8)):
+            row, col = i // 2, i % 2
+            celda = table.rows[row].cells[col]
+            parrafo = celda.paragraphs[0]
+            parrafo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = parrafo.add_run()
+            run.add_picture(img_streams[i], width=Inches(3.0))
 
     # Firma
-    doc.add_paragraph("\n\n" + "_"*40)
-    doc.add_paragraph("Dr. FRANCISCO ALBERTO PASTORE\nMN 74144 - Médico Cardiólogo")
-    if os.path.exists("firma_doctor.png"):
-        doc.add_picture("firma_doctor.png", width=Inches(1.8))
+    if os.path.exists(firma_path):
+        doc.add_paragraph("\n")
+        f_para = doc.add_paragraph()
+        f_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        f_para.add_run().add_picture(firma_path, width=Inches(2.0))
 
-    # ANEXO IMÁGENES 4x2
-    doc.add_page_break()
-    doc.add_paragraph("ANEXO DE IMÁGENES (CAPTURAS DE PANTALLA)").bold = True
-    t_img = doc.add_table(rows=4, cols=2)
-    t_img.style = 'Table Grid'
-    for row in t_img.rows:
-        row.height = Cm(6) # Espacio real para fotos
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
-    out = io.BytesIO()
-    doc.save(out)
-    out.seek(0)
-    return out
+# --- INTERFAZ ---
+st.title("👨‍⚕️ Generador de Informes Cardiológicos IA")
+st.markdown("Suba el archivo de datos y el PDF de capturas para generar el Word.")
 
-# --- INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="CardioReport Pro", layout="wide")
-st.title("🫀 Sistema de Redacción de Informes")
+col1, col2 = st.columns(2)
+with col1:
+    f_data = st.file_uploader("Subir Cálculos (CSV/Excel)", type=["csv", "xlsx"])
+with col2:
+    f_pdf = st.file_uploader("Subir PDF del Ecógrafo", type=["pdf"])
 
-archivo = st.file_uploader("Subir PDF del equipo", type=["pdf"])
-ex = extraer_datos_pdf(archivo)
-
-with st.form("main"):
-    col1, col2 = st.columns(2)
-    pac = col1.text_input("Paciente", value=ex["pac"])
-    fec = col2.date_input("Fecha", value=ex["fec"])
-    peso = col1.text_input("Peso")
-    alt = col2.text_input("Altura")
-
-    st.subheader("📏 Datos Estructurales (Ecocardiograma)")
-    e1, e2, e3, e4, e5 = st.columns(5)
-    ddvd, ddvi, dsvi = e1.text_input("DDVD"), e2.text_input("DDVI"), e3.text_input("DSVI")
-    fa, es = e4.text_input("FA (%)"), e5.text_input("ES (mm)")
-    e1b, e2b, e3b, e4b, e5b = st.columns(5)
-    siv, pp, drao = e1b.text_input("SIV"), e2b.text_input("PP"), e3b.text_input("Raíz Ao")
-    ai, aao = e4b.text_input("AI"), e5b.text_input("Ao Asc.")
-
-    st.subheader("🔊 Datos Hemodinámicos (Doppler)")
-    h = st.columns([1, 1, 1, 1, 1])
-    h[0].write("**Válvula**"); h[1].write("**Velocidad**"); h[2].write("**G. Pico**"); h[3].write("**G. Medio**"); h[4].write("**Insuf.**")
-    
-    def f_doppler(nombre, k):
-        c = st.columns([1, 1, 1, 1, 1])
-        c[0].write(nombre)
-        return c[1].text_input(f"v_{k}", label_visibility="collapsed"), \
-               c[2].text_input(f"p_{k}", label_visibility="collapsed"), \
-               c[3].text_input(f"m_{k}", label_visibility="collapsed"), \
-               c[4].selectbox(f"i_{k}", ["No", "Leve", "Mod", "Sev"], label_visibility="collapsed")
-
-    v_tri, gp_tri, gm_tri, i_tri = f_doppler("Tricúspide", "t")
-    v_pul, gp_pul, gm_pul, i_pul = f_doppler("Pulmonar", "p")
-    v_mit, gp_mit, gm_mit, i_mit = f_doppler("Mitral", "m")
-    v_ao, gp_ao, gm_ao, i_ao = f_doppler("Aórtica", "a")
-
-    conclu = st.text_area("Conclusión Final (Opcional)", "")
-    btn = st.form_submit_button("🚀 REDACTAR INFORME PROFESIONAL")
-
-if btn:
-    res = {
-        "pac": pac.upper(), "fec_str": fec.strftime("%d/%m/%Y"), "peso": peso, "alt": alt,
-        "ddvd": ddvd, "ddvi": ddvi, "dsvi": dsvi, "fa": fa, "es": es,
-        "siv": siv, "pp": pp, "drao": drao, "ai": ai, "aao": aao,
-        "v_tri": v_tri, "gp_tri": gp_tri, "gm_tri": gm_tri, "i_tri": i_tri,
-        "v_pul": v_pul, "gp_pul": gp_pul, "gm_pul": gm_pul, "i_pul": i_pul,
-        "v_mit": v_mit, "gp_mit": gp_mit, "gm_mit": gm_mit, "i_mit": i_mit,
-        "v_ao": v_ao, "gp_ao": gp_ao, "gm_ao": gm_ao, "i_ao": i_ao,
-        "conclu": conclu
-    }
-    st.download_button("📥 Descargar Word Redactado", data=generar_word_profesional(res), file_name=f"Informe_{pac}.docx")
+if f_data and f_pdf:
+    if st.button("🚀 Generar Informe Profesional"):
+        with st.spinner("Procesando..."):
+            # 1. Extraer
+            dict_datos = extraer_datos(f_data)
+            # 2. IA Groq
+            texto_ia = redactar_informe_ia(dict_datos)
+            # 3. Crear Word
+            docx_output = generar_word(dict_datos, texto_ia, f_pdf, "firma_doctor.png")
+            
+            st.success("Informe redactado por IA exitosamente.")
+            
+            with st.expander("Ver texto generado"):
+                st.write(texto_ia)
+            
+            st.download_button(
+                label="📥 Descargar Informe en Word",
+                data=docx_output,
+                file_name=f"Informe_{dict_datos.get('Paciente', 'Cardio')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
