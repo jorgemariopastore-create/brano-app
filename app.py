@@ -12,106 +12,88 @@ from groq import Groq
 # Configuración API
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-def buscar_dato_mejorado(df, keyword):
-    """Busca la palabra clave en el DF y devuelve la celda de la derecha"""
-    for r in range(len(df)):
-        for c in range(len(df.columns)):
-            if keyword.lower() in str(df.iloc[r, c]).lower():
-                try:
-                    valor = str(df.iloc[r, c+1]).strip()
-                    if valor.lower() != "nan" and valor != "":
-                        return valor
-                except: pass
-    return "N/A"
-
-def extraer_datos_formato_mejor(file):
+def extraer_datos_mejorado(file):
     info = {"paciente": {}, "eco": {}, "doppler": []}
     try:
         xls = pd.ExcelFile(file)
         df_eco = pd.read_excel(xls, "Ecodato", header=None)
         
-        # Datos de cabecera según el nuevo formato 'Mejor.xlsx'
-        info["paciente"]["Nombre"] = buscar_dato_mejorado(df_eco, "Paciente")
-        info["paciente"]["Fecha"] = buscar_dato_mejorado(df_eco, "Fecha")
+        # 1. Datos Básicos
+        info["paciente"]["Nombre"] = str(df_eco.iloc[0, 1]).strip()
+        info["paciente"]["Fecha"] = str(df_eco.iloc[1, 1]).split(" ")[0]
         
-        # Intentamos capturar peso/altura si el médico los agrega en celdas vacías
-        info["paciente"]["Peso"] = buscar_dato_mejorado(df_eco, "Peso")
-        info["paciente"]["Altura"] = buscar_dato_mejorado(df_eco, "Altura")
-        info["paciente"]["BSA"] = buscar_dato_mejorado(df_eco, "DUBOIS")
+        # 2. Superficie Corporal (S/C) - Buscamos en la columna de la derecha de DUBOIS
+        for r in range(len(df_eco)):
+            fila_texto = str(df_eco.iloc[r, :]).lower()
+            if "dubois" in fila_texto:
+                # En tu Excel, el valor suele estar 1 o 2 celdas a la derecha
+                for c_idx in range(len(df_eco.columns)):
+                    if "dubois" in str(df_eco.iloc[r, c_idx]).lower():
+                        val = df_eco.iloc[r, c_idx + 1]
+                        info["paciente"]["SC"] = f"{float(val):.2f}" if pd.notnull(val) else "N/A"
+                        break
 
-        # Mediciones de la tabla de cavidades
-        mapeo = {
-            "DDVI": "Diámetro Diastólico Ventrículo Izquierdo",
-            "DSVI": "Diámetro Sistólico Ventrículo Izquierdo",
-            "FA": "Fracción de Acortamiento",
-            "DDVD": "Ventrículo Derecho",
-            "DDAI": "Aurícula Izquierda",
-            "DDSIV": "Septum Interventricular",
-            "DDPP": "Pared Posterior",
-            "AAO": "Apertura Aórtica"
-        }
+        # 3. Cavidades (Estructura fija según tu Excel)
+        mapeo = {"DDVD": "Ventrículo Derecho", "DDVI": "Diámetro Diastólico VI", 
+                 "DSVI": "Diámetro Sistólico VI", "FA": "Fracción de Acortamiento", 
+                 "DDSIV": "Septum", "DDPP": "Pared Posterior", "AAO": "Apertura Aórtica"}
         
-        for sigla, nombre in mapeo.items():
-            # Buscamos en la primera columna la sigla exacta
-            for r in range(len(df_eco)):
-                if str(df_eco.iloc[r, 0]).strip().upper() == sigla:
-                    val = df_eco.iloc[r, 1]
-                    info["eco"][nombre] = val
-                    break
+        for r in range(len(df_eco)):
+            key = str(df_eco.iloc[r, 0]).strip().upper()
+            if key in mapeo:
+                info["eco"][mapeo[key]] = df_eco.iloc[r, 1]
 
-        # Hoja Doppler
+        # 4. Doppler
         if "Doppler" in xls.sheet_names:
             df_dop = pd.read_excel(xls, "Doppler", header=None)
             for i in range(len(df_dop)):
                 v = str(df_dop.iloc[i, 0])
                 if any(x in v for x in ["Tric", "Pulm", "Mit", "Aór"]):
-                    vel = df_dop.iloc[i, 1]
-                    if str(vel).lower() != "nan":
-                        info["doppler"].append(f"{v}: {vel} cm/s")
-                        
+                    info["doppler"].append(f"{v}: {df_dop.iloc[i, 1]} cm/s")
+                    
     except Exception as e:
-        st.error(f"Error procesando formato Mejor.xlsx: {e}")
+        st.error(f"Error en datos: {e}")
     return info
 
-def redactar_ia_estricta(info):
+def redactar_ia_final(info):
     prompt = f"""
-    Eres un Cardiólogo. Redacta un informe médico con estos datos:
-    Mediciones: {info['eco']}
-    Doppler: {info['doppler']}
+    Eres un Cardiólogo. Genera el texto para un informe.
+    DATOS: {info['eco']} | DOPPLER: {info['doppler']}
     
-    INSTRUCCIONES:
-    1. Sección 'HALLAZGOS': Escribe un párrafo técnico fluido. 
-       - Si DDVI > 56mm, indica dilatación. 
-       - Si FA < 27%, indica deterioro sistólico.
-    2. Sección 'CONCLUSIÓN': Diagnóstico final en 2 o 3 líneas.
-    
-    PROHIBIDO: No uses viñetas. No des consejos de salud ni recomendaciones de estudios futuros.
+    REGLAS DE ORO:
+    1. Escribe UN párrafo para 'HALLAZGOS' y UN párrafo para 'CONCLUSIÓN'.
+    2. PROHIBIDO poner: Nombre del paciente, fecha, título 'Informe Médico' o especialidad.
+    3. PROHIBIDO usar listas, negritas o recomendaciones.
+    4. El texto debe ser puramente descriptivo y técnico.
     """
     res = client.chat.completions.create(model="llama-3.1-8b-instant", messages=[{"role":"user","content":prompt}], temperature=0)
     return res.choices[0].message.content
 
-def generar_word_profesional(info, texto_ia, f_pdf):
+def generar_word_final(info, texto_ia, f_pdf):
     doc = Document()
     
-    # Encabezado
-    titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
-    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Encabezado Estilo Clínico
+    tit = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
+    tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    p = doc.add_paragraph()
-    p.add_run(f"PACIENTE: {info['paciente'].get('Nombre', 'N/A')}\n").bold = True
-    p.add_run(f"FECHA: {info['paciente'].get('Fecha', '27/01/2026')}\n")
-    p.add_run(f"PESO: {info['paciente'].get('Peso', '-')} kg | ALTURA: {info['paciente'].get('Altura', '-')} cm | SC: {info['paciente'].get('BSA', '-')} m²")
+    # Subencabezado de datos
+    p_datos = doc.add_paragraph()
+    p_datos.add_run(f"PACIENTE: {info['paciente']['Nombre']}\n").bold = True
+    p_datos.add_run(f"FECHA: {info['paciente']['Fecha']}\n")
+    p_datos.add_run(f"S/C: {info['paciente'].get('SC', 'N/A')} m²").bold = True
 
-    # Cuerpo (Hallazgos y Conclusión)
-    texto_ia = texto_ia.upper()
-    partes = texto_ia.split("CONCLUSIÓN")
-    
+    # Texto clínico
+    texto_limpio = texto_ia.replace("HALLAZGOS:", "").replace("Hallazgos:", "")
+    partes = texto_limpio.upper().split("CONCLUSIÓN")
+
     doc.add_heading('Hallazgos', level=1)
-    doc.add_paragraph(partes[0].replace("HALLAZGOS:", "").strip())
-    
+    h_p = doc.add_paragraph(partes[0].strip())
+    h_p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # <--- JUSTIFICADO
+
     if len(partes) > 1:
         doc.add_heading('Conclusión', level=1)
-        doc.add_paragraph(partes[1].replace(":", "").strip())
+        c_p = doc.add_paragraph(partes[1].replace(":", "").strip())
+        c_p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # <--- JUSTIFICADO
 
     # Imágenes
     doc.add_page_break()
@@ -121,14 +103,14 @@ def generar_word_profesional(info, texto_ia, f_pdf):
         pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
         imgs = [io.BytesIO(pdf.extract_image(img[0])["image"]) for p in pdf for img in p.get_images()]
         if imgs:
-            tabla = doc.add_table(rows=4, cols=2)
+            t = doc.add_table(rows=4, cols=2)
             for i in range(min(len(imgs), 8)):
-                run = tabla.rows[i//2].cells[i%2].paragraphs[0].add_run()
-                run.add_picture(imgs[i], width=Inches(2.8))
+                run = t.rows[i//2].cells[i%2].paragraphs[0].add_run()
+                run.add_picture(imgs[i], width=Inches(2.5))
     except: pass
 
-    # Firma a la derecha
-    doc.add_paragraph("\n\n")
+    # Firma (Derecha y separada)
+    doc.add_paragraph("\n\n\n")
     f_p = doc.add_paragraph()
     f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     
@@ -143,15 +125,14 @@ def generar_word_profesional(info, texto_ia, f_pdf):
     buf.seek(0)
     return buf
 
-# Streamlit UI
-st.title("CardioReport (Formato Mejorado) 🩺")
-f_xl = st.file_uploader("Subir Excel Mejor.xlsx", type=["xlsx", "xls"])
-f_pd = st.file_uploader("Subir PDF de Imágenes", type="pdf")
+# Streamlit
+st.title("CardioReport Pro 🩺")
+f_xl = st.file_uploader("Excel Mejorado", type=["xlsx"])
+f_pd = st.file_uploader("PDF Imágenes", type="pdf")
 
 if f_xl and f_pd:
-    if st.button("🚀 Generar Informe"):
-        datos = extraer_datos_formato_mejor(f_xl)
-        informe_txt = redactar_ia_estricta(datos)
-        word_file = generar_word_profesional(datos, informe_txt, f_pd)
-        st.success(f"Informe de {datos['paciente']['Nombre']} generado.")
-        st.download_button("📥 Descargar Word", word_file, f"Informe_{datos['paciente']['Nombre']}.docx")
+    if st.button("🚀 Generar Informe Final"):
+        data = extraer_datos_mejorado(f_xl)
+        txt = redactar_ia_final(data)
+        archivo = generar_word_final(data, txt, f_pd)
+        st.download_button("📥 Descargar Informe", archivo, f"Informe_{data['paciente']['Nombre']}.docx")
