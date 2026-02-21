@@ -2,124 +2,121 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import fitz
 import io
 import os
 from groq import Groq
 
-# Configuración API
+# 1. CLIENTE GROQ
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-def lectura_universal_excel(file):
-    """Intenta leer el archivo Sonoscape de 3 formas distintas para no fallar"""
-    datos = {"Eco": None, "Doppler": None}
+def buscar_valor_flexible(df, clave):
+    """Busca una palabra en cualquier parte del Excel y toma el valor de la derecha"""
+    for r in range(len(df)):
+        for c in range(len(df.columns)):
+            celda = str(df.iloc[r, c]).lower()
+            if clave.lower() in celda:
+                # Intentamos tomar la celda de la derecha
+                return str(df.iloc[r, c+1]).strip()
+    return "N/A"
+
+def procesar_excel_medico(file):
+    """Extrae datos de un Excel llenado manualmente por el médico"""
+    datos = {"paciente": {}, "mediciones": "", "doppler": ""}
+    
     try:
-        # Intento 1: Excel Estándar (.xlsx o .xls real)
+        # Cargar las hojas (Ecodato y Doppler)
         xls = pd.ExcelFile(file)
-        if "Ecodato" in xls.sheet_names:
-            datos["Eco"] = pd.read_excel(xls, "Ecodato", header=None)
+        df_eco = pd.read_excel(xls, "Ecodato", header=None)
+        
+        # Datos del encabezado (Punto 5)
+        datos["paciente"]["Nombre"] = buscar_valor_flexible(df_eco, "Paciente")
+        datos["paciente"]["Peso"] = buscar_valor_flexible(df_eco, "Peso")
+        datos["paciente"]["Altura"] = buscar_valor_flexible(df_eco, "Altura")
+        datos["paciente"]["BSA"] = buscar_valor_flexible(df_eco, "DUBOIS") # Superficie corporal
+
+        # Mediciones técnicas (Punto 1 y 3)
+        # Buscamos las siglas comunes que el médico suele anotar
+        dicc_siglas = {
+            "DDVI": "Diámetro Diastólico Ventrículo Izquierdo",
+            "DSVI": "Diámetro Sistólico Ventrículo Izquierdo",
+            "FA": "Fracción de Acortamiento",
+            "DDVD": "Diámetro Ventrículo Derecho",
+            "DDAI": "Diámetro Aurícula Izquierda",
+            "DDSIV": "Septum Interventricular",
+            "DDPP": "Pared Posterior"
+        }
+        
+        for sigla, nombre_largo in dicc_siglas.items():
+            valor = buscar_valor_flexible(df_eco, sigla)
+            if valor != "N/A":
+                datos["mediciones"] += f"- {nombre_largo}: {valor}\n"
+
+        # Datos Doppler
         if "Doppler" in xls.sheet_names:
-            datos["Doppler"] = pd.read_excel(xls, "Doppler", header=None)
-    except:
-        try:
-            # Intento 2: Si el .xls es en realidad un HTML (común en Sonoscape)
-            file.seek(0)
-            tablas = pd.read_html(file)
-            datos["Eco"] = tablas[0] # Usualmente la primera tabla
-            if len(tablas) > 1: datos["Doppler"] = tablas[1]
-        except:
-            st.error("El formato del Excel no es compatible. Intenta exportarlo desde el ecógrafo como CSV si es posible.")
+            df_dop = pd.read_excel(xls, "Doppler", header=None)
+            for i in range(len(df_dop)):
+                valvula = str(df_dop.iloc[i, 0])
+                if valvula in ["Tricúspide", "Pulmonar", "Mitral", "Aórtica"]:
+                    datos["doppler"] += f"- Válvula {valvula}: {df_dop.iloc[i, 1]} cm/s\n"
+                    
+    except Exception as e:
+        st.error(f"Error leyendo el Excel manual: {e}")
     return datos
 
-def procesar_datos_medicos(tablas):
-    """Extrae la info clave y la prepara para la narrativa"""
-    info = {"paciente": {}, "mediciones": "", "doppler": ""}
-    
-    df_eco = tablas["Eco"]
-    if df_eco is not None:
-        # Extraer Encabezado (Peso, Altura, BSA de las celdas de Sonoscape)
-        try:
-            info["paciente"]["Nombre"] = str(df_eco.iloc[3, 1])
-            info["paciente"]["Peso"] = str(df_eco.iloc[7, 9])
-            info["paciente"]["Altura"] = str(df_eco.iloc[8, 9])
-            info["paciente"]["BSA"] = str(df_eco.iloc[7, 11])
-        except: pass
-
-        # Mapeo de mediciones para la IA
-        dicc = {"DDVI": "Diámetro Diastólico VI", "DSVI": "Diámetro Sistólico VI", 
-                "FA": "Fracción de Acortamiento", "DDVD": "Diámetro VD", 
-                "DDAI": "Aurícula Izquierda"}
-        
-        for i in range(7, 20):
-            try:
-                sigla = str(df_eco.iloc[i, 0]).strip()
-                if sigla in dicc:
-                    val = df_eco.iloc[i, 1]
-                    ref = df_eco.iloc[i, 3]
-                    info["mediciones"] += f"{dicc[sigla]}: {val} (Referencia: {ref})\n"
-            except: pass
-
-    df_dop = tablas["Doppler"]
-    if df_dop is not None:
-        for i in range(2, len(df_dop)):
-            try:
-                v = str(df_dop.iloc[i, 0])
-                vel = str(df_dop.iloc[i, 1])
-                if v in ["Tricúspide", "Pulmonar", "Mitral", "Aórtica"]:
-                    info["doppler"] += f"Válvula {v}: {vel} cm/s\n"
-            except: pass
-            
-    return info
-
-def redactar_informe_prosa(info):
-    """La IA convierte los datos en un informe de cardiólogo real"""
+def redactar_informe_ia(info):
+    """La IA redacta como médico, separando Hallazgos de Conclusión"""
     prompt = f"""
-    Actúa como un Cardiólogo Senior. Redacta la 'Descripción Técnica' de un ecocardiograma.
-    USA PROSA MÉDICA (Párrafos fluidos). NO USES LISTAS NI VIÑETAS.
-    
-    DATOS:
+    Eres un Cardiólogo experto. Redacta un informe basado en estos datos:
     {info['mediciones']}
     {info['doppler']}
-    
-    ESTRUCTURA:
-    1. Cavidades izquierdas y función sistólica (menciona si hay dilatación o deterioro basado en las referencias).
-    2. Cavidades derechas.
-    3. Análisis Doppler valvular.
-    
-    REGLA DE ORO: Si el Diámetro Diastólico VI es superior a la referencia, descríbelo como 'dilatado'. 
-    Si la FA es inferior al 27%, descríbelo como 'función sistólica deteriorada'. 
-    Sé técnico, breve y profesional. No des consejos de salud.
+
+    INSTRUCCIONES DE FORMATO:
+    1. Divide el texto en dos secciones claras: 'HALLAZGOS' y 'CONCLUSIÓN'.
+    2. En HALLAZGOS: Usa párrafos fluidos (prosa), no listas. Menciona nombres completos.
+    3. Analiza: Si el DDVI es > 56mm, indica que está aumentado. Si la FA es < 27%, indica deterioro sistólico.
+    4. En CONCLUSIÓN: Da un diagnóstico final breve (máximo 3 líneas).
+    5. No hables de obesidad ni des consejos de salud.
     """
     
-    response = client.chat.completions.create(
+    res = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )
-    return response.choices[0].message.content
+    return res.choices[0].message.content
 
-def crear_word(info, narrativa, pdf_file):
+def generar_word_medico(info, texto_ia, f_pdf):
     doc = Document()
     
-    # Encabezado
-    titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
-    titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # 1. ENCABEZADO (Punto 5)
+    doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     p = doc.add_paragraph()
     p.add_run(f"PACIENTE: {info['paciente'].get('Nombre', 'N/A')}\n").bold = True
+    p.add_run(f"FECHA: 27/01/2026\n")
     p.add_run(f"PESO: {info['paciente'].get('Peso', '-')} kg | ALTURA: {info['paciente'].get('Altura', '-')} cm | SC: {info['paciente'].get('BSA', '-')} m²")
 
-    doc.add_heading('Hallazgos Clínicos', level=1)
-    doc.add_paragraph(narrativa)
+    # 2. CUERPO (Separando Hallazgos de Conclusión)
+    # Buscamos dónde la IA puso la palabra "CONCLUSIÓN" para separar los bloques
+    texto_limpio = texto_ia.replace("HALLAZGOS:", "").strip()
+    partes = texto_limpio.split("CONCLUSIÓN")
+    
+    doc.add_heading('Hallazgos', level=1)
+    doc.add_paragraph(partes[0].strip())
+    
+    if len(partes) > 1:
+        doc.add_heading('Conclusión', level=1)
+        doc.add_paragraph(partes[1].replace(":", "").strip())
 
-    # Anexo Imágenes 4x2
+    # 3. IMÁGENES (4x2)
     doc.add_page_break()
     doc.add_heading('Anexo de Imágenes', level=1)
     try:
-        pdf_file.seek(0)
-        pdf = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        f_pdf.seek(0)
+        pdf = fitz.open(stream=f_pdf.read(), filetype="pdf")
         imgs = [io.BytesIO(pdf.extract_image(img[0])["image"]) for p in pdf for img in p.get_images()]
         if imgs:
             tabla = doc.add_table(rows=4, cols=2)
@@ -128,31 +125,30 @@ def crear_word(info, narrativa, pdf_file):
                 run.add_picture(imgs[i], width=Inches(2.8))
     except: pass
 
-    # Firma
+    # 4. FIRMA (Punto 4)
+    doc.add_paragraph("\n\n")
+    firma_p = doc.add_paragraph()
+    firma_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     if os.path.exists("firma_doctor.png"):
-        f_p = doc.add_paragraph()
-        f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        f_p.add_run().add_picture("firma_doctor.png", width=Inches(1.8))
+        firma_p.add_run().add_picture("firma_doctor.png", width=Inches(1.8))
+    else:
+        firma_p.add_run("__________________________\nFirma del Médico").bold = True
 
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     return buf
 
-# --- Interfaz ---
-st.title("CardioReport Sonoscape 🩺")
-f_excel = st.file_uploader("Subir Excel del Ecógrafo", type=["xls", "xlsx"])
+# --- INTERFAZ ---
+st.title("Asistente de Informes Cardiológicos 🩺")
+f_excel = st.file_uploader("Subir Excel (Ecodato y Doppler)", type=["xlsx", "xls"])
 f_pdf = st.file_uploader("Subir PDF de Imágenes", type="pdf")
 
 if f_excel and f_pdf:
-    if st.button("Generar Informe Médico"):
-        with st.spinner("Leyendo datos y redactando..."):
-            tablas = lectura_universal_excel(f_excel)
-            if tablas["Eco"] is not None:
-                info = procesar_datos_medicos(tablas)
-                narrativa = redactar_informe_prosa(info)
-                word = crear_word(info, narrativa, f_pdf)
-                st.success("Informe generado.")
-                st.download_button("Descargar Word", word, "Informe.docx")
-            else:
-                st.error("No se pudo extraer información del archivo. Verifica que sea el exportado por el Sonoscape.")
+    if st.button("Generar Informe Profesional"):
+        with st.spinner("Procesando datos del médico..."):
+            datos = procesar_excel_medico(f_excel)
+            texto = redactar_informe_ia(datos)
+            word = generar_word_medico(datos, texto, f_pdf)
+            st.success("Informe redactado.")
+            st.download_button("Descargar Informe Word", word, "Informe_Medico.docx")
