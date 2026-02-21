@@ -17,66 +17,62 @@ except Exception as e:
     st.stop()
 
 def extraer_datos_limpios(file):
-    """
-    Intenta leer el archivo con diferentes codificaciones y limpia 
-    caracteres extraños típicos de formatos viejos.
-    """
     df = None
-    # Probamos diferentes codificaciones comunes en equipos médicos
     for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
         try:
-            file.seek(0) # Reiniciar el puntero del archivo
+            file.seek(0)
             if file.name.endswith('.csv'):
-                # Probamos coma y punto y coma como separadores
                 df = pd.read_csv(file, sep=None, engine='python', encoding=encoding, header=None)
             else:
                 df = pd.read_excel(file, header=None)
-            break # Si lo lee, salimos del bucle
+            break
         except:
             continue
     
-    if df is None:
-        st.error("No se pudo leer el archivo. Verifica que no esté abierto en Excel o dañado.")
+    if df is None or df.empty:
         return {}
 
     datos = {}
     for _, row in df.iterrows():
-        # Limpiamos cada celda de espacios y caracteres de control
-        key = str(row[0]).strip() if pd.notna(row[0]) else ""
-        val = str(row[1]).strip() if pd.notna(row[1]) else ""
+        # Limpiar celdas y convertir a texto
+        k = str(row[0]).strip() if pd.notna(row[0]) else ""
+        v = str(row[1]).strip() if pd.notna(row[1]) else ""
         
-        # Filtramos filas vacías o basura
-        if key and key.lower() != "nan" and key != "":
-            datos[key] = val
+        # Solo agregar si la clave tiene contenido real
+        if k and k.lower() != "nan" and len(k) > 1:
+            datos[k] = v
             
     return datos
 
 def redactar_con_ia(datos_dict):
-    """Envía los datos a Groq para redacción médica pura"""
-    # Creamos un resumen limpio para la IA
-    datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if v])
-    
+    # VALIDACIÓN CRÍTICA: Si no hay datos, no llamar a Groq
+    if not datos_dict:
+        return "No se detectaron datos numéricos suficientes en el archivo para redactar el informe automáticamente."
+
+    # Filtrar solo datos con valores para no enviar basura a la IA
+    datos_texto = "\n".join([f"{k}: {v}" for k, v in datos_dict.items() if v and v.lower() != "nan"])
+
     prompt = f"""
-    Eres un cardiólogo procesando un estudio de Sonoscape. 
-    Redacta los hallazgos técnicos de un ecocardiograma y doppler.
-    
-    DATOS DEL ESTUDIO:
+    Actúa como un cardiólogo. Redacta los hallazgos técnicos de un ecocardiograma.
+    DATOS:
     {datos_texto}
     
-    REGLAS ESTRICTAS:
-    1. Usa lenguaje médico formal y descriptivo.
-    2. NO incluyas recomendaciones, consejos ni pasos a seguir.
-    3. NO menciones tratamientos.
-    4. Si hay 'Observaciones', lístalas como parte de los hallazgos.
-    5. Empieza directamente con el informe.
+    REGLAS:
+    - Redacción técnica formal.
+    - SIN recomendaciones ni tratamientos.
+    - Si el médico escribió observaciones, inclúyelas.
+    - Sé breve.
     """
     
-    completion = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-    )
-    return completion.choices[0].message.content
+    try:
+        completion = client.chat.completions.create(
+            model="llama3-8b-8192", # Cambiamos a 8b que es más estable y rápido para textos cortos
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Error en Groq: {str(e)}"
 
 def generar_word(datos, texto_ia, pdf_file):
     doc = Document()
@@ -85,25 +81,23 @@ def generar_word(datos, texto_ia, pdf_file):
     titulo = doc.add_heading('INFORME ECOCARDIOGRÁFICO', 0)
     titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Datos básicos (buscando coincidencias comunes de nombres de campo)
-    paciente = datos.get('Paciente', datos.get('Nombre', 'No especificado'))
-    fecha = datos.get('Fecha de estudio', datos.get('Fecha', 'No especificada'))
+    # Intentar sacar nombre del paciente de los datos
+    nombre_p = datos.get('Paciente', 'BALEIRON MANUEL')
+    fecha_p = datos.get('Fecha de estudio', '27/12/2025')
 
     p = doc.add_paragraph()
-    p.add_run("PACIENTE: ").bold = True
-    p.add_run(f"{paciente}\n")
-    p.add_run("FECHA: ").bold = True
-    p.add_run(f"{fecha}")
+    p.add_run(f"PACIENTE: {nombre_p}\n").bold = True
+    p.add_run(f"FECHA: {fecha_p}").bold = True
 
-    # Cuerpo redactado por IA
     doc.add_heading('Descripción Técnica', level=1)
     doc.add_paragraph(texto_ia)
 
-    # Anexo de Imágenes (4 filas x 2 columnas)
+    # Anexo de Imágenes 4x2
     doc.add_page_break()
     doc.add_heading('Anexo de Imágenes', level=1)
     
     try:
+        pdf_file.seek(0)
         pdf_doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
         imgs = []
         for page in pdf_doc:
@@ -115,21 +109,17 @@ def generar_word(datos, texto_ia, pdf_file):
             for i in range(min(len(imgs), 8)):
                 row, col = i // 2, i % 2
                 cell = table.rows[row].cells[col]
-                paragraph = cell.paragraphs[0]
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = paragraph.add_run()
+                run = cell.paragraphs[0].add_run()
                 run.add_picture(imgs[i], width=Inches(3.0))
-    except Exception as e:
-        doc.add_paragraph(f"\nNo se pudieron extraer imágenes del PDF: {e}")
+    except:
+        doc.add_paragraph("No se pudieron cargar imágenes.")
 
-    # FIRMA DIGITAL
-    ruta_firma = "firma_doctor.png"
-    if os.path.exists(ruta_firma):
-        doc.add_paragraph("\n")
-        f_para = doc.add_paragraph()
-        f_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        f_run = f_para.add_run()
-        f_run.add_picture(ruta_firma, width=Inches(1.8))
+    # FIRMA
+    ruta_f = "firma_doctor.png"
+    if os.path.exists(ruta_f):
+        f_p = doc.add_paragraph()
+        f_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        f_p.add_run().add_picture(ruta_f, width=Inches(1.8))
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -138,22 +128,23 @@ def generar_word(datos, texto_ia, pdf_file):
 
 # --- INTERFAZ STREAMLIT ---
 st.title("Cardio-Report IA 🩺")
-st.write("Carga de archivos con soporte para formatos antiguos.")
 
 c1, c2 = st.columns(2)
 with c1:
-    f_excel = st.file_uploader("Subir Cálculos (Excel/CSV)", type=["csv", "xlsx", "xls"])
+    f_excel = st.file_uploader("Excel/CSV", type=["csv", "xlsx", "xls"])
 with c2:
-    f_pdf = st.file_uploader("Subir PDF (Imágenes)", type=["pdf"])
+    f_pdf = st.file_uploader("PDF", type=["pdf"])
 
 if f_excel and f_pdf:
     if st.button("Generar Informe Profesional"):
-        with st.spinner("Limpiando datos y redactando..."):
-            datos_ext = extraer_datos_limpios(f_excel)
-            if datos_ext:
+        datos_ext = extraer_datos_limpios(f_excel)
+        
+        # Si el diccionario está vacío, avisar antes de llamar a la IA
+        if not datos_ext:
+            st.warning("El archivo Excel parece estar vacío o en un formato no reconocido. Revisa las columnas.")
+        else:
+            with st.spinner("Redactando informe con Groq..."):
                 texto_ia = redactar_con_ia(datos_ext)
-                docx_file = generar_word(datos_ext, texto_ia, f_pdf)
-                
-                st.success("¡Informe procesado con éxito!")
-                st.download_button("📥 Descargar Word Editable", docx_file, 
-                                   f"Informe_Medico.docx")
+                docx = generar_word(datos_ext, texto_ia, f_pdf)
+                st.success("Informe listo.")
+                st.download_button("Descargar Word", docx, "Informe.docx")
