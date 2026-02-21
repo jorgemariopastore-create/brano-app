@@ -5,4 +5,3 @@ python-docx
 PyMuPDF
 Pillow
 requests
-
