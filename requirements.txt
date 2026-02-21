@@ -4,4 +4,5 @@ openpyxl
 python-docx
 PyMuPDF
 Pillow
-groq
+groq==0.9.0
+
