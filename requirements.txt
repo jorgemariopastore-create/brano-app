@@ -1,11 +1,8 @@
 streamlit
 pandas
-openpyxl
+docx
 python-docx
-PyMuPDF
-Pillow
-requests
+pymupdf
 groq
-python-dotenv
-
-
+xlrd
+openpyxl
