@@ -10,7 +10,7 @@ from groq import Groq
 # ==========================================
 # 1. CONFIGURACIÓN DE SEGURIDAD
 # ==========================================
-# Pega tu clave real aquí abajo, reemplazando el texto entre comillas:
+# Si tienes problemas con los "Secrets" de Streamlit, pega tu clave aquí abajo:
 API_KEY_MANUAL = "TU_CLAVE_GSAK_AQUÍ" 
 
 if "GROQ_API_KEY" in st.secrets:
@@ -34,14 +34,13 @@ def extraer_datos_estacion(file):
         res["paciente"]["fecha"] = df_eco.iloc[1, 1].replace("nan", "").split(" ")[0]
         res["paciente"]["sc"] = df_eco.iloc[10, 4].replace("nan", "").strip()
 
-        # Mediciones principales (Filas 5 a 20)
         for r in range(5, 20):
             sigla = df_eco.iloc[r, 0].strip().upper()
             val = df_eco.iloc[r, 1].replace("nan", "").strip()
             if sigla != "NAN" and val:
                 res["mediciones"][sigla] = val
 
-        # --- Hoja Doppler (Lógica de Marcas 'X') ---
+        # --- Hoja Doppler ---
         if "Doppler" in xls.sheet_names:
             df_dop = pd.read_excel(xls, "Doppler").astype(str)
             for _, row in df_dop.iterrows():
@@ -67,7 +66,7 @@ def redactar_ia(datos):
     1. HALLAZGOS: DESCRIPCIÓN DE CAVIDADES Y VÁLVULAS.
     2. CONCLUSIÓN: DIAGNÓSTICO FINAL BREVE.
     
-    REGLAS: TODO EN MAYÚSCULAS. NADA COLOQUIAL. SIN SUGERENCIAS.
+    REGLAS: TODO EN MAYÚSCULAS. LENGUAJE SECO Y TÉCNICO. SIN SUGERENCIAS.
     SI DDVI > 56 MM ESCRIBE 'DILATACIÓN DEL VI'.
     """
     res = client.chat.completions.create(
@@ -83,16 +82,15 @@ def redactar_ia(datos):
 def generar_word(datos, texto_ia, f_pdf):
     doc = Document()
     
-    # Título
+    # Cabecera
     h = doc.add_heading('Ecocardiograma 2D y Doppler Cardíaco Color', 0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Datos Paciente
     p = doc.add_paragraph()
     p.add_run(f"PACIENTE: {datos['paciente']['nombre']}\n").bold = True
     p.add_run(f"FECHA: {datos['paciente']['fecha']} | S/C: {datos['paciente']['sc']} m²")
 
-    # Contenido IA
+    # IA
     partes = texto_ia.upper().split("CONCLUSIÓN")
     doc.add_heading('HALLAZGOS', level=1)
     doc.add_paragraph(partes[0].replace("HALLAZGOS:", "").strip()).alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -121,7 +119,7 @@ def generar_word(datos, texto_ia, f_pdf):
                         row[j].paragraphs[0].add_run().add_picture(imgs[i+j], width=Inches(2.8))
         except: pass
 
-    # FIRMA (Tabla invisible a la derecha)
+    # Firma
     doc.add_paragraph("\n\n")
     tbl_f = doc.add_table(rows=1, cols=2)
     tbl_f.columns[0].width = Inches(4.5)
@@ -142,17 +140,16 @@ def generar_word(datos, texto_ia, f_pdf):
 st.set_page_config(page_title="CardioReport", layout="centered")
 st.title("Generador de Informes Médicos 🩺")
 
-f_xl = st.file_uploader("1. Subir Excel (Ecodato + Doppler)", type="xlsx")
-f_pd = st.file_uploader("2. Subir PDF de Imágenes", type="pdf")
+# Aceptamos xls y xlsx para evitar problemas
+f_xl = st.file_uploader("1. Subir Excel (Ecodato + Doppler)", type=["xlsx", "xls"])
+f_pd = st.file_uploader("2. Subir PDF de Imágenes", type=["pdf"])
 
 if f_xl and f_pd:
     if st.button("GENERAR INFORME FINAL"):
-        with st.spinner("Procesando datos..."):
-            # AHORA EL PARÉNTESIS ESTÁ CERRADO:
+        with st.spinner("Procesando..."):
             datos = extraer_datos_estacion(f_xl)
             texto = redactar_ia(datos)
             doc_final = generar_word(datos, texto, f_pd)
             
-            st.success(f"Informe de {datos['paciente']['nombre']} generado.")
-            st.download_button("📥 Descargar Informe Word", doc_final, 
-                             file_name=f"Informe_{datos['paciente']['nombre']}.docx")
+            st.success(f"Informe de {datos['paciente']['nombre']} listo.")
+            st.download_button("📥 DESCARGAR WORD", doc_final, file_name="Informe_Medico.docx")
