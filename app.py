@@ -8,9 +8,9 @@ import io
 from groq import Groq
 
 # ==========================================
-# 1. CONFIGURACIÓN DE SEGURIDAD (LLAVE)
+# 1. CONFIGURACIÓN DE SEGURIDAD
 # ==========================================
-# Si no puedes editar "Secrets", pega tu clave entre las comillas abajo:
+# Pega tu clave real aquí abajo, reemplazando el texto entre comillas:
 API_KEY_MANUAL = "TU_CLAVE_GSAK_AQUÍ" 
 
 if "GROQ_API_KEY" in st.secrets:
@@ -32,7 +32,6 @@ def extraer_datos_estacion(file):
         df_eco = pd.read_excel(xls, "Ecodato", header=None).astype(str)
         res["paciente"]["nombre"] = df_eco.iloc[0, 1].replace("nan", "").strip().upper()
         res["paciente"]["fecha"] = df_eco.iloc[1, 1].replace("nan", "").split(" ")[0]
-        # Superficie Corporal en E11 (Fila 10, Col 4)
         res["paciente"]["sc"] = df_eco.iloc[10, 4].replace("nan", "").strip()
 
         # Mediciones principales (Filas 5 a 20)
@@ -48,7 +47,6 @@ def extraer_datos_estacion(file):
             for _, row in df_dop.iterrows():
                 valvula = row.iloc[0].upper()
                 velocidad = row.iloc[1].replace("nan", "")
-                # Si hay una 'X' en cualquier columna de la fila, lo tomamos como hallazgo
                 if row.str.contains('x', case=False).any():
                     res["doppler"].append(f"{valvula}: VEL {velocidad} CM/S - HALLAZGO POSITIVO")
                     
@@ -66,7 +64,7 @@ def redactar_ia(datos):
     DOPPLER: {datos['doppler']}
     
     ESTRUCTURA:
-    1. HALLAZGOS: DESCRIPCIÓN DE CAVIDADES Y VALVULAS.
+    1. HALLAZGOS: DESCRIPCIÓN DE CAVIDADES Y VÁLVULAS.
     2. CONCLUSIÓN: DIAGNÓSTICO FINAL BREVE.
     
     REGLAS: TODO EN MAYÚSCULAS. NADA COLOQUIAL. SIN SUGERENCIAS.
@@ -80,7 +78,7 @@ def redactar_ia(datos):
     return res.choices[0].message.content
 
 # ==========================================
-# 4. GENERADOR DE WORD (DISEÑO FINAL)
+# 4. GENERADOR DE WORD
 # ==========================================
 def generar_word(datos, texto_ia, f_pdf):
     doc = Document()
@@ -103,7 +101,7 @@ def generar_word(datos, texto_ia, f_pdf):
         doc.add_heading('CONCLUSIÓN', level=1)
         doc.add_paragraph(partes[1].replace(":", "").strip()).bold = True
 
-    # Imágenes 4x2 (Máximo 8)
+    # Imágenes 4x2
     if f_pdf:
         doc.add_page_break()
         doc.add_heading('ANEXO DE IMÁGENES', level=1)
@@ -115,7 +113,6 @@ def generar_word(datos, texto_ia, f_pdf):
                 for img in page.get_images():
                     imgs.append(io.BytesIO(pdf.extract_image(img[0])["image"]))
             
-            # Crear tabla 4x2
             tabla = doc.add_table(rows=0, cols=2)
             for i in range(0, min(len(imgs), 8), 2):
                 row = tabla.add_row().cells
@@ -142,7 +139,7 @@ def generar_word(datos, texto_ia, f_pdf):
 # ==========================================
 # 5. INTERFAZ STREAMLIT
 # ==========================================
-st.set_page_config(page_title="CardioReport Professional", layout="centered")
+st.set_page_config(page_title="CardioReport", layout="centered")
 st.title("Generador de Informes Médicos 🩺")
 
 f_xl = st.file_uploader("1. Subir Excel (Ecodato + Doppler)", type="xlsx")
@@ -150,7 +147,12 @@ f_pd = st.file_uploader("2. Subir PDF de Imágenes", type="pdf")
 
 if f_xl and f_pd:
     if st.button("GENERAR INFORME FINAL"):
-        with st.spinner("Procesando datos médicos..."):
-            datos = extraer_datos_estacion(f_xl
- 
-  
+        with st.spinner("Procesando datos..."):
+            # AHORA EL PARÉNTESIS ESTÁ CERRADO:
+            datos = extraer_datos_estacion(f_xl)
+            texto = redactar_ia(datos)
+            doc_final = generar_word(datos, texto, f_pd)
+            
+            st.success(f"Informe de {datos['paciente']['nombre']} generado.")
+            st.download_button("📥 Descargar Informe Word", doc_final, 
+                             file_name=f"Informe_{datos['paciente']['nombre']}.docx")
